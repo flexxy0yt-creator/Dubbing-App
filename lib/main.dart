@@ -96,25 +96,60 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
   }
 
   Future<void> pickVideo() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.video,
-    );
-    if (result != null && result.files.isNotEmpty) {
-      setState(() {
-        rawVideoFile = result.files.first;
-        outputVideoUrl = null;
-      });
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.video,
+        allowMultiple: false,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          rawVideoFile = result.files.first;
+          outputVideoUrl = null;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Video selected: ${result.files.first.name}")),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text("Permission Denied ya Error: $e"),
+          ),
+        );
+      }
     }
   }
 
   Future<void> pickSpeakerAudio(int speakerNumber) async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      type: FileType.audio,
-    );
-    if (result != null && result.files.isNotEmpty) {
-      setState(() {
-        speakerAudios[speakerNumber] = result.files.first;
-      });
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        type: FileType.custom,
+        allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg'],
+        allowMultiple: false,
+      );
+      if (result != null && result.files.isNotEmpty) {
+        setState(() {
+          speakerAudios[speakerNumber] = result.files.first;
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Speaker $speakerNumber voice selected!")),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: Colors.redAccent,
+            content: Text("Audio permission error: $e"),
+          ),
+        );
+      }
     }
   }
 
@@ -134,7 +169,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
     });
 
     try {
-      // 1. Create Job on Sarvam AI
+      // 1. Create Dubbing Job on Sarvam AI
       final createJobUrl = Uri.parse("https://api.sarvam.ai/jobs");
       final response = await http.post(
         createJobUrl,
@@ -152,7 +187,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       );
 
       if (response.statusCode != 200 && response.statusCode != 201) {
-        throw Exception("Job creation failed: ${response.body}");
+        throw Exception("API Error (${response.statusCode}): ${response.body}");
       }
 
       final jobData = jsonDecode(response.body);
@@ -173,15 +208,15 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       );
 
       if (uploadResponse.statusCode != 200) {
-        throw Exception("Video upload failed");
+        throw Exception("Video upload failed to AI server.");
       }
 
       // 3. Start Pipeline
       setState(() {
         dubbingProgress = 0.6;
         statusMessage = isMultiSpeakerCustomMode
-            ? "3/4: Synthesizing multi-speaker voice clones..."
-            : "3/4: Preserving voice identity & lip-speed sync...";
+            ? "3/4: Synthesizing multi-speaker custom voices..."
+            : "3/4: Syncing speed, tone & voice identity...";
       });
 
       await http.post(
@@ -191,8 +226,11 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
 
       // 4. Poll live status
       bool completed = false;
-      while (!completed) {
+      int retryCount = 0;
+      while (!completed && retryCount < 90) {
         await Future.delayed(const Duration(seconds: 4));
+        retryCount++;
+
         final statusRes = await http.get(
           Uri.parse("https://api.sarvam.ai/jobs/$jobId/live-status"),
           headers: {"api-subscription-key": apiKey},
@@ -204,7 +242,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
           if (status == "completed" || status == "partial_failure") {
             completed = true;
           } else if (status == "failed") {
-            throw Exception("Dubbing failed on AI server.");
+            throw Exception("AI processing failed on server.");
           }
         }
       }
@@ -212,7 +250,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       // 5. Fetch Exported Video
       setState(() {
         dubbingProgress = 0.95;
-        statusMessage = "4/4: Finalizing dubbed video download link...";
+        statusMessage = "4/4: Generating video download link...";
       });
 
       final exportRes = await http.get(
@@ -244,16 +282,16 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E293B),
-        title: const Text("Sarvam AI Key Settings"),
+        title: const Text("Sarvam API Key Settings"),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              "Default Key add hai, agar apni custom key use karni ho toh yahan change kar sakte hain:",
+              "Default Key set hai. Agar credits khatam hon ya nayi key lagani ho toh yahan change karein:",
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             TextField(
               controller: controller,
               decoration: const InputDecoration(
@@ -307,12 +345,12 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
               onTap: pickVideo,
               child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
                   color: const Color(0xFF1E293B),
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: rawVideoFile != null ? Colors.green : Colors.indigoAccent,
+                    color: rawVideoFile != null ? Colors.greenAccent : Colors.indigoAccent,
                     width: 2,
                   ),
                 ),
@@ -321,12 +359,12 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
                     Icon(
                       rawVideoFile != null ? Icons.check_circle : Icons.video_call,
                       size: 45,
-                      color: rawVideoFile != null ? Colors.green : Colors.indigoAccent,
+                      color: rawVideoFile != null ? Colors.greenAccent : Colors.indigoAccent,
                     ),
                     const SizedBox(height: 10),
                     Text(
                       rawVideoFile != null
-                          ? "Video Selected: ${rawVideoFile!.name}"
+                          ? "Selected: ${rawVideoFile!.name}"
                           : "Upload Raw Video (Tap to browse)",
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontWeight: FontWeight.bold),
@@ -383,14 +421,14 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
               ),
               child: SwitchListTile(
                 title: const Text("Multi-Speaker Custom Voice Clone", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                subtitle: const Text("Upload reference audio for up to 5 speakers to match custom voices & emotions", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                subtitle: const Text("Upload voice clips for up to 5 speakers to match custom voices & emotions", style: TextStyle(fontSize: 11, color: Colors.grey)),
                 value: isMultiSpeakerCustomMode,
                 activeColor: Colors.pinkAccent,
                 onChanged: (val) => setState(() => isMultiSpeakerCustomMode = val),
               ),
             ),
 
-            // If toggle ON, show 5 Speaker Audio Uploaders
+            // 5 Speaker Audio Uploaders
             if (isMultiSpeakerCustomMode) ...[
               const SizedBox(height: 12),
               const Text("Upload Reference Voice Clips:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
@@ -434,7 +472,10 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
                 icon: const Icon(Icons.auto_awesome),
-                label: Text(isDubbing ? "Dubbing Video..." : "DUB VIDEO NOW", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                label: Text(
+                  isDubbing ? "Dubbing in Progress..." : "DUB VIDEO NOW",
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                ),
                 onPressed: isDubbing ? null : startDubbingProcess,
               ),
             ),
@@ -491,7 +532,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
                           child: ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(backgroundColor: Colors.blueAccent),
                             icon: const Icon(Icons.play_arrow),
-                            label: const Text("Preview Video"),
+                            label: const Text("Preview"),
                             onPressed: () => launchUrl(Uri.parse(outputVideoUrl!), mode: LaunchMode.externalApplication),
                           ),
                         ),
