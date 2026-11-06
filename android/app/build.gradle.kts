@@ -6,7 +6,7 @@ plugins {
 
 android {
     namespace = "com.flexxy.dubbing.dubbing_app"
-    compileSdk = flutter.compileSdkVersion
+    compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
