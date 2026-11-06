@@ -24,19 +24,13 @@ jobs:
         with:
           channel: 'stable'
 
-      - name: Initialize Flutter Project if needed
+      - name: Clean & Get Packages
         run: |
-          if [ ! -f "pubspec.yaml" ]; then
-            flutter create . --org com.flexxy.dubbing --project-name dubbing_app
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add .
-            git commit -m "Initialize Flutter project structure"
-            git push
-          fi
+          flutter clean
+          flutter pub get
 
-      - name: Build APK
-        run: flutter build apk --release --target-platform android-arm64
+      - name: Build Universal APK (For 2GB, 4GB, 8GB & PC)
+        run: flutter build apk --release
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
