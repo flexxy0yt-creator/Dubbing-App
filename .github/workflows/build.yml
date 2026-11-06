@@ -29,11 +29,11 @@ jobs:
           flutter clean
           flutter pub get
 
-      - name: Build Universal APK (For 2GB, 4GB, 8GB & PC)
-        run: flutter build apk --release
+      - name: Build Lightweight Split APKs
+        run: flutter build apk --release --split-per-abi
 
-      - name: Upload APK
+      - name: Upload Lightweight APKs
         uses: actions/upload-artifact@v4
         with:
-          name: Dubbing-App-APK
-          path: build/app/outputs/flutter-apk/app-release.apk
+          name: Dubbing-App-Small-APKs
+          path: build/app/outputs/flutter-apk/*.apk

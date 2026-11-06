@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -41,8 +42,9 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
   static const String defaultApiKey = "sk_7pn4q3cl_y3m4VpdokzKCYNhk2y9DtSfH";
   String apiKey = defaultApiKey;
 
-  PlatformFile? rawVideoFile;
-  String sourceLanguage = "auto";
+  final ImagePicker _picker = ImagePicker();
+  XFile? rawVideoFile;
+  String sourceLanguage = "en-IN";
   String targetLanguage = "hi-IN";
 
   bool isMultiSpeakerCustomMode = false;
@@ -61,8 +63,8 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
 
   final Map<String, String> languages = {
     "auto": "Auto Detect",
-    "hi-IN": "Hindi (हिन्दी)",
     "en-IN": "English (Indian)",
+    "hi-IN": "Hindi (हिन्दी)",
     "bn-IN": "Bengali (বাংলা)",
     "te-IN": "Telugu (తెలుగు)",
     "ta-IN": "Tamil (தமிழ்)",
@@ -97,18 +99,17 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
 
   Future<void> pickVideo() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.video,
-        allowMultiple: false,
+      final XFile? video = await _picker.pickVideo(
+        source: ImageSource.gallery,
       );
-      if (result != null && result.files.isNotEmpty) {
+      if (video != null) {
         setState(() {
-          rawVideoFile = result.files.first;
+          rawVideoFile = video;
           outputVideoUrl = null;
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Video selected: ${result.files.first.name}")),
+            SnackBar(content: Text("Video Selected: ${video.name}")),
           );
         }
       }
@@ -117,7 +118,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text("Permission Denied ya Error: $e"),
+            content: Text("Gallery Error: $e"),
           ),
         );
       }
@@ -127,9 +128,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
   Future<void> pickSpeakerAudio(int speakerNumber) async {
     try {
       FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['mp3', 'wav', 'm4a', 'aac', 'ogg'],
-        allowMultiple: false,
+        type: FileType.any,
       );
       if (result != null && result.files.isNotEmpty) {
         setState(() {
@@ -137,7 +136,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Speaker $speakerNumber voice selected!")),
+            SnackBar(content: Text("Speaker $speakerNumber Voice Selected!")),
           );
         }
       }
@@ -146,7 +145,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             backgroundColor: Colors.redAccent,
-            content: Text("Audio permission error: $e"),
+            content: Text("Audio Error: $e"),
           ),
         );
       }
@@ -154,7 +153,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
   }
 
   Future<void> startDubbingProcess() async {
-    if (rawVideoFile == null || rawVideoFile!.path == null) {
+    if (rawVideoFile == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Pehle ek raw video select karo!")),
       );
@@ -164,26 +163,33 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
     setState(() {
       isDubbing = true;
       dubbingProgress = 0.1;
-      statusMessage = "1/4: Initializing AI Dubbing job...";
+      statusMessage = "1/4: Initializing Sarvam AI Dubbing Job...";
       outputVideoUrl = null;
     });
 
     try {
-      // 1. Create Dubbing Job on Sarvam AI
-      final createJobUrl = Uri.parse("https://api.sarvam.ai/jobs");
+      // 1. Correct Endpoint: /dubbing/jobs
+      final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
+      
+      final Map<String, dynamic> requestBody = {
+        "target_language_codes": [targetLanguage],
+        "export_options": ["video"],
+        "voice_cloning": true,
+        "num_speakers": isMultiSpeakerCustomMode ? 2 : 1,
+        "job_name": rawVideoFile!.name,
+      };
+
+      if (sourceLanguage != "auto") {
+        requestBody["source_language_code"] = sourceLanguage;
+      }
+
       final response = await http.post(
         createJobUrl,
         headers: {
           "Content-Type": "application/json",
           "api-subscription-key": apiKey,
         },
-        body: jsonEncode({
-          "job_type": "dubbing",
-          "src_lang": sourceLanguage,
-          "target_langs": [targetLanguage],
-          "voice_cloning": true,
-          "export_options": ["video", "audio"]
-        }),
+        body: jsonEncode(requestBody),
       );
 
       if (response.statusCode != 200 && response.statusCode != 201) {
@@ -191,78 +197,89 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       }
 
       final jobData = jsonDecode(response.body);
-      final String jobId = jobData["job_id"] ?? jobData["id"];
-      final String uploadUrl = jobData["upload_url"];
+      final data = jobData["data"] ?? jobData;
+      final String jobId = data["job_id"] ?? data["id"];
+      final String uploadUrl = data["upload_url"];
 
-      // 2. Upload raw video
+      // 2. Upload video bytes to signed upload_url
       setState(() {
         dubbingProgress = 0.35;
-        statusMessage = "2/4: Uploading video & analyzing speaker emotions...";
+        statusMessage = "2/4: Uploading video & analyzing voices...";
       });
 
-      final videoBytes = await File(rawVideoFile!.path!).readAsBytes();
+      final videoBytes = await rawVideoFile!.readAsBytes();
       final uploadResponse = await http.put(
         Uri.parse(uploadUrl),
         headers: {"Content-Type": "application/octet-stream"},
         body: videoBytes,
       );
 
-      if (uploadResponse.statusCode != 200) {
-        throw Exception("Video upload failed to AI server.");
+      if (uploadResponse.statusCode != 200 && uploadResponse.statusCode != 201) {
+        throw Exception("Video upload failed to cloud storage.");
       }
 
-      // 3. Start Pipeline
+      // 3. Start Dubbing Pipeline: /dubbing/jobs/{job_id}/start
       setState(() {
-        dubbingProgress = 0.6;
-        statusMessage = isMultiSpeakerCustomMode
-            ? "3/4: Synthesizing multi-speaker custom voices..."
-            : "3/4: Syncing speed, tone & voice identity...";
+        dubbingProgress = 0.55;
+        statusMessage = "3/4: AI Dubbing & Voice Cloning in progress...";
       });
 
       await http.post(
-        Uri.parse("https://api.sarvam.ai/jobs/$jobId/start"),
+        Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/start"),
         headers: {"api-subscription-key": apiKey},
       );
 
-      // 4. Poll live status
+      // 4. Poll live status: /dubbing/jobs/{job_id}/live-status
       bool completed = false;
-      int retryCount = 0;
-      while (!completed && retryCount < 90) {
+      int retries = 0;
+      while (!completed && retries < 90) {
         await Future.delayed(const Duration(seconds: 4));
-        retryCount++;
+        retries++;
 
         final statusRes = await http.get(
-          Uri.parse("https://api.sarvam.ai/jobs/$jobId/live-status"),
+          Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/live-status"),
           headers: {"api-subscription-key": apiKey},
         );
 
         if (statusRes.statusCode == 200) {
           final sData = jsonDecode(statusRes.body);
-          String status = sData["status"] ?? "";
+          final liveData = sData["data"] ?? sData;
+          String status = liveData["status"] ?? "";
+          String? stepLabel = liveData["current_step_label"];
+
+          if (stepLabel != null) {
+            setState(() {
+              statusMessage = "3/4: $stepLabel";
+            });
+          }
+
           if (status == "completed" || status == "partial_failure") {
             completed = true;
           } else if (status == "failed") {
-            throw Exception("AI processing failed on server.");
+            throw Exception("AI processing failed on server: ${liveData["error_message"]}");
           }
         }
       }
 
-      // 5. Fetch Exported Video
+      // 5. Fetch Exported Video URL: /dubbing/jobs/{job_id}/export-status
       setState(() {
         dubbingProgress = 0.95;
-        statusMessage = "4/4: Generating video download link...";
+        statusMessage = "4/4: Finalizing dubbed video download link...";
       });
 
       final exportRes = await http.get(
-        Uri.parse("https://api.sarvam.ai/jobs/$jobId/export-status"),
+        Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/export-status"),
         headers: {"api-subscription-key": apiKey},
       );
 
       if (exportRes.statusCode == 200) {
         final expData = jsonDecode(exportRes.body);
+        final expOutputs = expData["data"] ?? expData;
+        
         setState(() {
-          outputVideoUrl = expData["download_url"] ??
-              expData["outputs"]?[targetLanguage]?["video"];
+          outputVideoUrl = expOutputs["download_url"] ??
+              expOutputs["outputs"]?[targetLanguage]?["video"]?["download_url"] ??
+              expOutputs["outputs"]?[targetLanguage]?["video"];
           isDubbing = false;
           dubbingProgress = 1.0;
           statusMessage = "Video Successfully Dubbed! 🎉";
@@ -288,7 +305,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              "Default Key set hai. Agar credits khatam hon ya nayi key lagani ho toh yahan change karein:",
+              "Default Key pre-loaded hai. Custom key lagane ke liye yahan edit karein:",
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 12),
