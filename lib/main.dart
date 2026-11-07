@@ -62,7 +62,6 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
   String? outputVideoUrl;
 
   final Map<String, String> languages = {
-    "auto": "Auto Detect",
     "en-IN": "English (Indian)",
     "hi-IN": "Hindi (हिन्दी)",
     "bn-IN": "Bengali (বাংলা)",
@@ -73,7 +72,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
     "kn-IN": "Kannada (ಕನ್ನಡ)",
     "ml-IN": "Malayalam (മലയാളം)",
     "pa-IN": "Punjabi (ਪੰਜਾਬੀ)",
-    "od-IN": "Odia (ଓଡ଼ିଆ)",
+    "or-IN": "Odia (ଓଡ଼ିଆ)",
   };
 
   @override
@@ -160,6 +159,13 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       return;
     }
 
+    if (sourceLanguage == targetLanguage) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Source aur Target bhasha alag honi chahiye!")),
+      );
+      return;
+    }
+
     setState(() {
       isDubbing = true;
       dubbingProgress = 0.1;
@@ -168,20 +174,17 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
     });
 
     try {
-      // 1. Correct Endpoint: /dubbing/jobs
+      // 1. Correct Endpoint and Exact Required Fields: src_lang & target_langs
       final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
       
       final Map<String, dynamic> requestBody = {
-        "target_language_codes": [targetLanguage],
+        "src_lang": sourceLanguage,
+        "target_langs": [targetLanguage],
         "export_options": ["video"],
         "voice_cloning": true,
         "num_speakers": isMultiSpeakerCustomMode ? 2 : 1,
         "job_name": rawVideoFile!.name,
       };
-
-      if (sourceLanguage != "auto") {
-        requestBody["source_language_code"] = sourceLanguage;
-      }
 
       final response = await http.post(
         createJobUrl,
@@ -218,7 +221,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         throw Exception("Video upload failed to cloud storage.");
       }
 
-      // 3. Start Dubbing Pipeline: /dubbing/jobs/{job_id}/start
+      // 3. Start Dubbing Pipeline
       setState(() {
         dubbingProgress = 0.55;
         statusMessage = "3/4: AI Dubbing & Voice Cloning in progress...";
@@ -229,11 +232,11 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         headers: {"api-subscription-key": apiKey},
       );
 
-      // 4. Poll live status: /dubbing/jobs/{job_id}/live-status
+      // 4. Poll live status
       bool completed = false;
       int retries = 0;
       while (!completed && retries < 90) {
-        await Future.delayed(const Duration(seconds: 4));
+        await Future.delayed(const Duration(seconds: 5));
         retries++;
 
         final statusRes = await http.get(
@@ -256,12 +259,12 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
           if (status == "completed" || status == "partial_failure") {
             completed = true;
           } else if (status == "failed") {
-            throw Exception("AI processing failed on server: ${liveData["error_message"]}");
+            throw Exception("AI processing failed: ${liveData["error_message"]}");
           }
         }
       }
 
-      // 5. Fetch Exported Video URL: /dubbing/jobs/{job_id}/export-status
+      // 5. Fetch Exported Video URL
       setState(() {
         dubbingProgress = 0.95;
         statusMessage = "4/4: Finalizing dubbed video download link...";
@@ -419,7 +422,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
                       DropdownButton<String>(
                         isExpanded: true,
                         value: targetLanguage,
-                        items: languages.entries.where((e) => e.key != "auto").map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 13)))).toList(),
+                        items: languages.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 13)))).toList(),
                         onChanged: (val) => setState(() => targetLanguage = val!),
                       ),
                     ],
