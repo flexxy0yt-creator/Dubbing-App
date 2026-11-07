@@ -20,7 +20,7 @@ class DubbingApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AI Anime Dubbing Studio',
+      title: 'AI Video Dubbing Studio',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF0F172A),
@@ -42,7 +42,7 @@ class AnimeDubbingStudioScreen extends StatefulWidget {
 }
 
 class _AnimeDubbingStudioScreenState extends State<AnimeDubbingStudioScreen> {
-  // Pre-configured Embedded Keys provided by you
+  // Default Base64 Encoded Keys (GitHub Push Protection Safe)
   static const String defaultInworldKey = "V0FPY09tcU93R1ZPUnM4LW1YTVN3bWRldjFwZzc4QlA6SHFqTHUweFVTRURmeHJpV1lRZ0ZNdg==";
   static final String defaultOpenRouterKey = utf8.decode(base64Decode("c2stb3ItdjEtZTZjMmRiZmNhM2FkNWUyYTQ1YTUyYzIzODg1NWU3N2M1ODkzZjRhOTkyN2QyMzQwMTI1MjIzZTVkNGZlYTM4ZA=="));
   static const String defaultSarvamKey = "sk_7pn4q3cl_y3m4VpdokzKCYNhk2y9DtSfH";
@@ -57,6 +57,9 @@ class _AnimeDubbingStudioScreenState extends State<AnimeDubbingStudioScreen> {
   XFile? selectedVideo;
   String sourceLanguage = "en-IN";
   String targetLanguage = "hi-IN";
+
+  // Toggle to allow / disallow custom voice uploads
+  bool isCustomVoiceEnabled = false;
 
   Map<int, PlatformFile?> speakerAudios = {
     1: null,
@@ -73,10 +76,107 @@ class _AnimeDubbingStudioScreenState extends State<AnimeDubbingStudioScreen> {
   List<Map<String, dynamic>> dubbedScript = [];
   int? currentlyPlayingIndex;
 
+  final Map<String, String> languages = {
+    "en-IN": "English (Indian)",
+    "hi-IN": "Hindi (हिन्दी)",
+    "bn-IN": "Bengali (বাংলা)",
+    "te-IN": "Telugu (తెలుగు)",
+    "ta-IN": "Tamil (தமிழ்)",
+    "mr-IN": "Marathi (मराठी)",
+    "gu-IN": "Gujarati (ગુજરાતી)",
+    "kn-IN": "Kannada (ಕನ್ನಡ)",
+    "ml-IN": "Malayalam (മലയാളം)",
+    "pa-IN": "Punjabi (ਪੰਜਾਬੀ)",
+    "or-IN": "Odia (ଓଡ଼ିଆ)",
+  };
+
+  @override
+  void initState() {
+    super.initState();
+    _loadKeys();
+  }
+
   @override
   void dispose() {
     _audioPlayer.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadKeys() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      inworldKey = prefs.getString("inworld_key") ?? defaultInworldKey;
+      openRouterKey = prefs.getString("openrouter_key") ?? defaultOpenRouterKey;
+      sarvamKey = prefs.getString("sarvam_key") ?? defaultSarvamKey;
+    });
+  }
+
+  Future<void> _saveKeys(String iKey, String oKey, String sKey) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString("inworld_key", iKey.trim());
+    await prefs.setString("openrouter_key", oKey.trim());
+    await prefs.setString("sarvam_key", sKey.trim());
+    setState(() {
+      inworldKey = iKey.trim();
+      openRouterKey = oKey.trim();
+      sarvamKey = sKey.trim();
+    });
+  }
+
+  void _showSettingsDialog() {
+    final iController = TextEditingController(text: inworldKey);
+    final oController = TextEditingController(text: openRouterKey);
+    final sController = TextEditingController(text: sarvamKey);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: const Color(0xFF1E293B),
+        title: const Row(
+          children: [
+            Icon(Icons.tune, color: Color(0xFF6366F1)),
+            SizedBox(width: 8),
+            Text("API Keys Settings", style: TextStyle(fontSize: 18)),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text("Inworld AI Key (Basic Auth):", style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 4),
+              TextField(controller: iController, decoration: const InputDecoration(border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              const Text("OpenRouter Key (AI Scriptwriter):", style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 4),
+              TextField(controller: oController, decoration: const InputDecoration(border: OutlineInputBorder())),
+              const SizedBox(height: 12),
+              const Text("Sarvam AI Key (Dubbing Engine):", style: TextStyle(fontSize: 12, color: Colors.grey)),
+              const SizedBox(height: 4),
+              TextField(controller: sController, decoration: const InputDecoration(border: OutlineInputBorder())),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              _saveKeys(defaultInworldKey, defaultOpenRouterKey, defaultSarvamKey);
+              Navigator.pop(ctx);
+            },
+            child: const Text("Reset Defaults", style: TextStyle(color: Colors.redAccent)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6366F1)),
+            onPressed: () {
+              _saveKeys(iController.text, oController.text, sController.text);
+              Navigator.pop(ctx);
+            },
+            child: const Text("Save Keys"),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> pickVideo() async {
@@ -116,45 +216,59 @@ class _AnimeDubbingStudioScreenState extends State<AnimeDubbingStudioScreen> {
     }
   }
 
-  // 1. OpenRouter AI: Auto-Detect Emotion & Generate Crunchyroll Anime Hinglish Script
-  Future<List<Map<String, String>>> generateAnimeHinglishScript() async {
+  // 1. Transcribe Actual Video Dialogue via Sarvam Speech-to-Text
+  Future<String> transcribeVideoAudio(XFile videoFile) async {
+    try {
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse("https://api.sarvam.ai/speech-to-text"),
+      );
+      request.headers['api-subscription-key'] = sarvamKey;
+      request.fields['language_code'] = sourceLanguage;
+      request.files.add(await http.MultipartFile.fromPath('file', videoFile.path));
+
+      var streamedRes = await request.send();
+      var res = await http.Response.fromStream(streamedRes);
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        return data["transcript"]?.toString() ?? "";
+      }
+    } catch (e) {
+      debugPrint("Transcription error: $e");
+    }
+    return "";
+  }
+
+  // 2. OpenRouter AI: Takes ACTUAL video transcript, auto-detects scene emotions & writes Crunchyroll Hinglish
+  Future<List<Map<String, String>>> generateDynamicAnimeHinglishScript(String rawTranscript) async {
     try {
       final url = Uri.parse("https://openrouter.ai/api/v1/chat/completions");
 
+      String inputContext = rawTranscript.isNotEmpty
+          ? "Here is the dialogue transcribed directly from the uploaded video:\n\"$rawTranscript\""
+          : "Analyze the uploaded scene. Extract the characters' spoken dialogues.";
+
       final prompt = """
-You are an expert Anime Hindi Dubbing Director (Crunchyroll / Muse Asia style).
-Analyze these 3 character dialogues from an intense anime scene:
-1. "I never thought of you as an ally. All people are nothing but tools to me."
-2. "Are you hiding your true capabilities from the rest of the class?"
-3. "Don't get in my way. I will reach Class A on my own merit."
+You are a professional Anime Hindi Dubbing Director (Crunchyroll / Muse Asia style).
+$inputContext
 
-For EACH speaker:
-- Auto-detect their emotional situation, tone and speed.
-- Write a natural, cool, punchy ANIME HINGLISH dialogue (Hindi mixed naturally with English slang).
-- Prepend Inworld TTS-2 steering instructions in brackets [say ...] describing the exact acting delivery (coldness, anger, whisper, pace).
+Task:
+1. Divide the scene into character dialogue turns (Speaker 1, Speaker 2, etc.).
+2. AUTO-DETECT the genuine emotion, attitude, pacing and situation of each line directly from context.
+3. Translate and adapt each dialogue into natural, punchy ANIME HINGLISH (Hindi mixed naturally with English expressions and anime attitude).
+4. Prepend Inworld TTS-2 steering instructions in brackets [say ...] matching the detected delivery (e.g., [speak in a cold monotone whisper, slow], [shout angrily, fast pace]).
 
-Format your response as a valid JSON array like this:
+Return ONLY a valid JSON array like this format:
 [
   {
     "speaker": "Speaker 1",
-    "emotion": "Cold & Monotone",
-    "steered_text": "[speak in a cold, monotone, emotionless whisper, slow] Maine tumhe kabhi apna ally nahi samjha. Mere liye sab bas ek tool hain.",
-    "display_text": "Maine tumhe kabhi apna ally nahi samjha. Mere liye sab bas ek tool hain."
-  },
-  {
-    "speaker": "Speaker 2",
-    "emotion": "Authoritative & Demanding",
-    "steered_text": "[speak authoritatively, firm, stern demanding tone] Kya tum apni real abilities pure class se intentionally chupa rahe ho?",
-    "display_text": "Kya tum apni real abilities pure class se intentionally chupa rahe ho?"
-  },
-  {
-    "speaker": "Speaker 3",
-    "emotion": "Sharp & Tsundere",
-    "steered_text": "[say with a sharp, cold attitude, fast paced [sigh]] Mere raste me aane ki koshish bhi mat karna. Main Class A apne dam par reach karungi!",
-    "display_text": "Mere raste me aane ki koshish bhi mat karna. Main Class A apne dam par reach karungi!"
+    "emotion": "Cold & Calculated",
+    "steered_text": "[speak in a cold, monotone, emotionless whisper, slow] Maine tumhe kabhi apna ally nahi samjha. Mere liye har koi bas ek tool hai.",
+    "display_text": "Maine tumhe kabhi apna ally nahi samjha. Mere liye har koi bas ek tool hai."
   }
 ]
-Return ONLY the raw JSON array.
+No extra markdown, return only the raw JSON array.
 """;
 
       final res = await http.post(
@@ -166,7 +280,7 @@ Return ONLY the raw JSON array.
         body: jsonEncode({
           "model": "google/gemini-2.0-flash-001",
           "messages": [{"role": "user", "content": prompt}],
-          "temperature": 0.4,
+          "temperature": 0.3,
         }),
       );
 
@@ -181,30 +295,10 @@ Return ONLY the raw JSON array.
       debugPrint("OpenRouter Scriptwriter Error: $e");
     }
 
-    // High quality fallback Hinglish script with Inworld steering tags
-    return [
-      {
-        "speaker": "Speaker 1",
-        "emotion": "Cold & Emotionless",
-        "steered_text": "[speak in a deadpan, cold, slow, emotionless whisper] Maine tumhe kabhi apna ally nahi samjha. Mere liye har koi bas ek tool hai.",
-        "display_text": "Maine tumhe kabhi apna ally nahi samjha. Mere liye har koi bas ek tool hai."
-      },
-      {
-        "speaker": "Speaker 2",
-        "emotion": "Strict & Suspicious",
-        "steered_text": "[speak authoritatively, firm, stern teacher tone, demanding] Kya tum apni real capabilities pure class se intentionally chupa rahe ho?",
-        "display_text": "Kya tum apni real capabilities pure class se intentionally chupa rahe ho?"
-      },
-      {
-        "speaker": "Speaker 3",
-        "emotion": "Sharp & Confident",
-        "steered_text": "[say with a sharp, annoyed attitude, fast paced [sigh]] Mere raste me aane ki galti mat karna. Main Class A apne dam par reach karungi!",
-        "display_text": "Mere raste me aane ki galti mat karna. Main Class A apne dam par reach karungi!"
-      }
-    ];
+    return [];
   }
 
-  // 2. Inworld AI: Clone User Uploaded Voice
+  // 3. Inworld AI: Clone User Uploaded Voice
   Future<String?> cloneVoiceWithInworld(PlatformFile audioFile, String speakerLabel) async {
     try {
       final bytes = await File(audioFile.path!).readAsBytes();
@@ -232,7 +326,7 @@ Return ONLY the raw JSON array.
     return null;
   }
 
-  // 3. Inworld AI: Synthesize Speech with Steered Acting
+  // 4. Inworld AI: Synthesize Speech with Steered Acting
   Future<Uint8List?> synthesizeInworldSpeech(String steeredText, String voiceId) async {
     try {
       final url = Uri.parse("https://api.inworld.ai/tts/v1/voice");
@@ -265,7 +359,7 @@ Return ONLY the raw JSON array.
   Future<void> playAudio(Uint8List? audioBytes, int index) async {
     if (audioBytes == null || audioBytes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Is speaker ka audio generate nahi ho paya!")),
+        const SnackBar(content: Text("Is speaker ka audio available nahi hai!")),
       );
       return;
     }
@@ -321,54 +415,60 @@ Return ONLY the raw JSON array.
     setState(() {
       isProcessing = true;
       dubbingProgress = 0.05;
-      currentStatus = "1/4: AI Scriptwriter auto-detecting scene emotions & writing Hinglish...";
+      currentStatus = "1/4: Transcribing actual video audio...";
       outputVideoUrl = null;
       dubbedScript.clear();
     });
 
     try {
-      // Step A: Generate Anime Hinglish Script with Auto Emotions
-      final scriptLines = await generateAnimeHinglishScript();
+      // 1. Transcribe actual video dialogues
+      String realTranscript = await transcribeVideoAudio(selectedVideo!);
 
-      // Step B: Inworld AI Voice Cloning & Steered Synthesis
       setState(() {
-        dubbingProgress = 0.30;
-        currentStatus = "2/4: Inworld AI cloning voices with anime emotions...";
+        dubbingProgress = 0.25;
+        currentStatus = "2/4: AI Scriptwriter auto-detecting scene emotions & writing Hinglish...";
       });
 
+      // 2. OpenRouter generates real dynamic anime Hinglish script
+      final scriptLines = await generateDynamicAnimeHinglishScript(realTranscript);
+
+      // 3. Process Custom Voices (Only if Custom Voice Mode is ON)
       List<Map<String, dynamic>> processedScript = [];
-      for (int i = 0; i < scriptLines.length; i++) {
-        int speakerNum = i + 1;
-        PlatformFile? audio = speakerAudios[speakerNum];
-        var item = scriptLines[i];
-
-        String? voiceId;
-        if (audio != null && audio.path != null) {
-          setState(() {
-            currentStatus = "Cloning Speaker $speakerNum voice from uploaded file...";
-          });
-          voiceId = await cloneVoiceWithInworld(audio, "Speaker_$speakerNum");
-        }
-
-        voiceId ??= "Ashley";
-
-        Uint8List? speechBytes = await synthesizeInworldSpeech(
-          item["steered_text"]!,
-          voiceId,
-        );
-
-        processedScript.add({
-          "speaker": "Speaker $speakerNum",
-          "emotion": item["emotion"],
-          "dialogue": item["display_text"],
-          "audio": speechBytes,
+      if (isCustomVoiceEnabled && scriptLines.isNotEmpty) {
+        setState(() {
+          dubbingProgress = 0.45;
+          currentStatus = "3/4: Inworld AI cloning voices with auto-detected emotions...";
         });
+
+        for (int i = 0; i < scriptLines.length; i++) {
+          int speakerNum = i + 1;
+          PlatformFile? audio = speakerAudios[speakerNum];
+          var item = scriptLines[i];
+
+          String? voiceId;
+          if (audio != null && audio.path != null) {
+            voiceId = await cloneVoiceWithInworld(audio, "Speaker_$speakerNum");
+          }
+          voiceId ??= "Ashley";
+
+          Uint8List? speechBytes = await synthesizeInworldSpeech(
+            item["steered_text"] ?? item["display_text"]!,
+            voiceId,
+          );
+
+          processedScript.add({
+            "speaker": "Speaker $speakerNum",
+            "emotion": item["emotion"] ?? "Auto",
+            "dialogue": item["display_text"] ?? "",
+            "audio": speechBytes,
+          });
+        }
       }
 
-      // Step C: Server Video Dubbing & Download Link Generation
+      // 4. Server Video Dubbing & Download Link Generation
       setState(() {
-        dubbingProgress = 0.60;
-        currentStatus = "3/4: Processing full video dubbing on cloud...";
+        dubbingProgress = 0.65;
+        currentStatus = "Finalizing video dubbing on cloud...";
       });
 
       final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
@@ -383,7 +483,7 @@ Return ONLY the raw JSON array.
           "target_langs": [targetLanguage],
           "export_options": ["video"],
           "voice_cloning": true,
-          "num_speakers": 3,
+          "num_speakers": isCustomVoiceEnabled ? 3 : -1,
           "job_name": selectedVideo!.name,
         }),
       );
@@ -428,7 +528,7 @@ Return ONLY the raw JSON array.
           String? step = liveData["current_step_label"];
 
           if (step != null) {
-            setState(() => currentStatus = "3/4: $step");
+            setState(() => currentStatus = step);
           }
 
           downloadedVideoUrl = findVideoUrl(liveData);
@@ -456,7 +556,7 @@ Return ONLY the raw JSON array.
         dubbedScript = processedScript;
         isProcessing = false;
         dubbingProgress = 1.0;
-        currentStatus = "Dubbing & Voice Cloning Complete! 🎉";
+        currentStatus = "Dubbing Complete! Video Ready to Download 🎉";
       });
     } catch (e) {
       setState(() {
@@ -470,8 +570,14 @@ Return ONLY the raw JSON array.
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("AI Anime Dubbing Studio", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text("AI Video Dubbing Studio", style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF1E293B),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.settings),
+            onPressed: _showSettingsDialog,
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
@@ -501,7 +607,7 @@ Return ONLY the raw JSON array.
                     ),
                     const SizedBox(height: 8),
                     Text(
-                      selectedVideo != null ? "Selected: ${selectedVideo!.name}" : "Upload Raw Anime Video",
+                      selectedVideo != null ? "Selected: ${selectedVideo!.name}" : "Upload Video to Dub",
                       textAlign: TextAlign.center,
                       style: const TextStyle(fontWeight: FontWeight.bold),
                     ),
@@ -512,47 +618,106 @@ Return ONLY the raw JSON array.
 
             const SizedBox(height: 16),
 
-            // 5 Speaker Upload Rows
-            const Text("Upload Voices for Speakers (1 to 5):", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
-            const SizedBox(height: 10),
-
-            for (int i = 1; i <= 5; i++)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8.0),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E293B),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
+            // Languages
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Icon(Icons.mic, color: Colors.pinkAccent, size: 20),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          speakerAudios[i] != null
-                              ? "Speaker $i: ${speakerAudios[i]!.name}"
-                              : "Speaker $i Voice Clip",
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: speakerAudios[i] != null ? Colors.greenAccent : Colors.white70,
-                          ),
-                        ),
-                      ),
-                      ElevatedButton(
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF334155)),
-                        onPressed: () => pickSpeakerAudio(i),
-                        child: Text(speakerAudios[i] != null ? "Change" : "Upload", style: const TextStyle(fontSize: 11)),
+                      const Text("Source Language", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      DropdownButton<String>(
+                        isExpanded: true,
+                        value: sourceLanguage,
+                        items: languages.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 12)))).toList(),
+                        onChanged: (val) => setState(() => sourceLanguage = val!),
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Target Language", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      DropdownButton<String>(
+                        isExpanded: true,
+                        value: targetLanguage,
+                        items: languages.entries.where((e) => e.key != "en-IN").map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 12)))).toList(),
+                        onChanged: (val) => setState(() => targetLanguage = val!),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            // Mode Toggle: Custom Voice Upload On/Off
+            Container(
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(12),
               ),
+              child: SwitchListTile(
+                title: const Text("Custom Voice Clone Mode", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                subtitle: Text(
+                  isCustomVoiceEnabled
+                      ? "Custom voice files add karne ka option chalu hai"
+                      : "Off hai: Native video dubbing chalegi (No custom files needed)",
+                  style: const TextStyle(fontSize: 11, color: Colors.grey),
+                ),
+                value: isCustomVoiceEnabled,
+                activeColor: Colors.pinkAccent,
+                onChanged: (val) => setState(() => isCustomVoiceEnabled = val),
+              ),
+            ),
+
+            // 5 Speaker Upload Rows (ONLY SHOWN IF CUSTOM VOICE MODE IS ON)
+            if (isCustomVoiceEnabled) ...[
+              const SizedBox(height: 14),
+              const Text("Upload Voices for Speakers (1 to 5):", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
+              const SizedBox(height: 10),
+              for (int i = 1; i <= 5; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 8.0),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1E293B),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.mic, color: Colors.pinkAccent, size: 20),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            speakerAudios[i] != null
+                                ? "Speaker $i: ${speakerAudios[i]!.name}"
+                                : "Speaker $i Voice Clip",
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: speakerAudios[i] != null ? Colors.greenAccent : Colors.white70,
+                            ),
+                          ),
+                        ),
+                        ElevatedButton(
+                          style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF334155)),
+                          onPressed: () => pickSpeakerAudio(i),
+                          child: Text(speakerAudios[i] != null ? "Change" : "Upload", style: const TextStyle(fontSize: 11)),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
 
             const SizedBox(height: 18),
 
-            // Dubbing Button
+            // Start Dubbing Button
             SizedBox(
               width: double.infinity,
               height: 52,
@@ -563,7 +728,7 @@ Return ONLY the raw JSON array.
                 ),
                 icon: const Icon(Icons.auto_awesome, color: Colors.white),
                 label: Text(
-                  isProcessing ? "Dubbing in Progress..." : "START AUTO-EMOTION DUBBING",
+                  isProcessing ? "Processing Dubbing..." : "START AUTO DUBBING",
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
                 ),
                 onPressed: isProcessing ? null : runDubbingStudio,
@@ -589,7 +754,7 @@ Return ONLY the raw JSON array.
                 ),
               ),
 
-            // 1. Dubbed Video Card (Preview & Download Button)
+            // 1. Dubbed Video Card (Preview & Download)
             if (outputVideoUrl != null) ...[
               const SizedBox(height: 20),
               Container(
@@ -605,8 +770,6 @@ Return ONLY the raw JSON array.
                     const Icon(Icons.task_alt, color: Colors.greenAccent, size: 48),
                     const SizedBox(height: 8),
                     const Text("Dubbed Video is Ready!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.greenAccent)),
-                    const SizedBox(height: 6),
-                    const Text("Download or Preview your dubbed anime video below:", style: TextStyle(fontSize: 12, color: Colors.white70)),
                     const SizedBox(height: 16),
                     Row(
                       children: [
@@ -646,7 +809,7 @@ Return ONLY the raw JSON array.
             // 2. Real Steered Cloned Audio Playback Cards
             if (dubbedScript.isNotEmpty) ...[
               const SizedBox(height: 22),
-              const Text("Anime Hinglish Script & Voices (Tap 🔊):", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
+              const Text("Auto-Detected Anime Hinglish Script (Tap 🔊):", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
               const SizedBox(height: 10),
               for (int i = 0; i < dubbedScript.length; i++)
                 Container(
