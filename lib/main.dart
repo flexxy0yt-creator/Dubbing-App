@@ -47,14 +47,8 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
   String sourceLanguage = "en-IN";
   String targetLanguage = "hi-IN";
 
-  bool isMultiSpeakerCustomMode = false;
-  Map<int, PlatformFile?> speakerAudios = {
-    1: null,
-    2: null,
-    3: null,
-    4: null,
-    5: null,
-  };
+  bool isCustomVoiceMode = false;
+  PlatformFile? customVoiceAudio;
 
   bool isDubbing = false;
   String statusMessage = "";
@@ -98,9 +92,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
 
   Future<void> pickVideo() async {
     try {
-      final XFile? video = await _picker.pickVideo(
-        source: ImageSource.gallery,
-      );
+      final XFile? video = await _picker.pickVideo(source: ImageSource.gallery);
       if (video != null) {
         setState(() {
           rawVideoFile = video;
@@ -115,39 +107,68 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text("Gallery Error: $e"),
-          ),
+          SnackBar(backgroundColor: Colors.redAccent, content: Text("Gallery Error: $e")),
         );
       }
     }
   }
 
-  Future<void> pickSpeakerAudio(int speakerNumber) async {
+  Future<void> pickCustomAudio() async {
     try {
-      FilePickerResult? result = await FilePicker.platform.pickFiles(
-        type: FileType.any,
-      );
+      FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.any);
       if (result != null && result.files.isNotEmpty) {
         setState(() {
-          speakerAudios[speakerNumber] = result.files.first;
+          customVoiceAudio = result.files.first;
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Speaker $speakerNumber Voice Selected!")),
+            SnackBar(content: Text("Custom Voice Selected: ${result.files.first.name}")),
           );
         }
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: Colors.redAccent,
-            content: Text("Audio Error: $e"),
-          ),
+          SnackBar(backgroundColor: Colors.redAccent, content: Text("Audio Error: $e")),
         );
       }
+    }
+  }
+
+  // 1. Function to create a custom Voice ID from the uploaded MP3
+  Future<String?> createCustomVoiceId(PlatformFile audioFile) async {
+    setState(() {
+      statusMessage = "1/5: Uploading reference audio & creating Voice Clone ID...";
+      dubbingProgress = 0.15;
+    });
+
+    try {
+      var request = http.MultipartRequest(
+        'POST',
+        Uri.parse("https://api.sarvam.ai/voices/create"),
+      );
+
+      request.headers['api-subscription-key'] = apiKey;
+      request.fields['name'] = audioFile.name.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+      request.fields['language'] = targetLanguage;
+
+      request.files.add(await http.MultipartFile.fromPath(
+        'file',
+        audioFile.path!,
+      ));
+
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final resData = jsonDecode(response.body);
+        final data = resData["data"] ?? resData;
+        return data["voice_id"] ?? data["id"];
+      } else {
+        throw Exception("Voice clone failed (${response.statusCode}): ${response.body}");
+      }
+    } catch (e) {
+      throw Exception("Voice Clone Error: $e");
     }
   }
 
@@ -168,23 +189,43 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
 
     setState(() {
       isDubbing = true;
-      dubbingProgress = 0.1;
-      statusMessage = "1/4: Initializing Sarvam AI Dubbing Job...";
+      dubbingProgress = 0.05;
+      statusMessage = "Initializing AI Studio...";
       outputVideoUrl = null;
     });
 
     try {
-      // 1. Create Job on Sarvam AI
+      String? customVoiceId;
+
+      // Agar custom voice toggle ON hai aur file selected hai
+      if (isCustomVoiceMode && customVoiceAudio != null && customVoiceAudio!.path != null) {
+        customVoiceId = await createCustomVoiceId(customVoiceAudio!);
+      }
+
+      // 2. Create Dubbing Job
+      setState(() {
+        dubbingProgress = 0.25;
+        statusMessage = "2/5: Creating Sarvam AI Dubbing Job...";
+      });
+
       final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
-      
+
       final Map<String, dynamic> requestBody = {
         "src_lang": sourceLanguage,
         "target_langs": [targetLanguage],
         "export_options": ["video"],
-        "voice_cloning": true,
-        "num_speakers": isMultiSpeakerCustomMode ? 2 : 1,
+        "num_speakers": 1,
         "job_name": rawVideoFile!.name,
       };
+
+      if (customVoiceId != null) {
+        // Custom Voice mode: cloning = false, voice_id = customVoiceId
+        requestBody["voice_cloning"] = false;
+        requestBody["voice_id"] = customVoiceId;
+      } else {
+        // In-Video Voice clone mode: auto-clones the speakers in the video
+        requestBody["voice_cloning"] = true;
+      }
 
       final response = await http.post(
         createJobUrl,
@@ -204,10 +245,10 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       final String jobId = data["job_id"] ?? data["id"];
       final String uploadUrl = data["upload_url"];
 
-      // 2. Upload video bytes to Azure Storage (WITH REQUIRED x-ms-blob-type HEADER!)
+      // 3. Upload raw video
       setState(() {
-        dubbingProgress = 0.35;
-        statusMessage = "2/4: Uploading video & analyzing voices...";
+        dubbingProgress = 0.45;
+        statusMessage = "3/5: Uploading video to cloud storage...";
       });
 
       final videoBytes = await rawVideoFile!.readAsBytes();
@@ -215,7 +256,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         Uri.parse(uploadUrl),
         headers: {
           "Content-Type": "application/octet-stream",
-          "x-ms-blob-type": "BlockBlob", // <-- FIX FOR CLOUD STORAGE!
+          "x-ms-blob-type": "BlockBlob",
         },
         body: videoBytes,
       );
@@ -224,10 +265,12 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         throw Exception("Video upload failed (${uploadResponse.statusCode}): ${uploadResponse.body}");
       }
 
-      // 3. Start Dubbing Pipeline
+      // 4. Start Pipeline
       setState(() {
-        dubbingProgress = 0.55;
-        statusMessage = "3/4: AI Dubbing & Voice Cloning in progress...";
+        dubbingProgress = 0.65;
+        statusMessage = customVoiceId != null
+            ? "4/5: Dubbing video with your Custom Cloned Voice..."
+            : "4/5: Preserving video emotions & voice tone...";
       });
 
       await http.post(
@@ -235,7 +278,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         headers: {"api-subscription-key": apiKey},
       );
 
-      // 4. Poll live status
+      // 5. Poll live status
       bool completed = false;
       int retries = 0;
       while (!completed && retries < 90) {
@@ -255,7 +298,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
 
           if (stepLabel != null) {
             setState(() {
-              statusMessage = "3/4: $stepLabel";
+              statusMessage = "4/5: $stepLabel";
             });
           }
 
@@ -267,10 +310,10 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
         }
       }
 
-      // 5. Fetch Exported Video URL
+      // 6. Fetch Exported Video
       setState(() {
         dubbingProgress = 0.95;
-        statusMessage = "4/4: Finalizing dubbed video download link...";
+        statusMessage = "5/5: Preparing download link...";
       });
 
       final exportRes = await http.get(
@@ -281,7 +324,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       if (exportRes.statusCode == 200) {
         final expData = jsonDecode(exportRes.body);
         final expOutputs = expData["data"] ?? expData;
-        
+
         setState(() {
           outputVideoUrl = expOutputs["download_url"] ??
               expOutputs["outputs"]?[targetLanguage]?["video"]?["download_url"] ??
@@ -436,51 +479,54 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
 
             const SizedBox(height: 16),
 
-            // Multi-Speaker Voice Clone Toggle Option
+            // Custom Voice Clone Toggle
             Container(
               decoration: BoxDecoration(
                 color: const Color(0xFF1E293B),
                 borderRadius: BorderRadius.circular(12),
               ),
               child: SwitchListTile(
-                title: const Text("Multi-Speaker Custom Voice Clone", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                subtitle: const Text("Upload voice clips for up to 5 speakers to match custom voices & emotions", style: TextStyle(fontSize: 11, color: Colors.grey)),
-                value: isMultiSpeakerCustomMode,
+                title: const Text("Custom Voice Clone (from MP3)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                subtitle: const Text("Apni pasand ki aawaz (Ayankoji/Teacher) ka audio upload karke usi aawaz me dub karein", style: TextStyle(fontSize: 11, color: Colors.grey)),
+                value: isCustomVoiceMode,
                 activeColor: Colors.pinkAccent,
-                onChanged: (val) => setState(() => isMultiSpeakerCustomMode = val),
+                onChanged: (val) => setState(() => isCustomVoiceMode = val),
               ),
             ),
 
-            // 5 Speaker Audio Uploaders
-            if (isMultiSpeakerCustomMode) ...[
+            // Custom Audio Picker
+            if (isCustomVoiceMode) ...[
               const SizedBox(height: 12),
-              const Text("Upload Reference Voice Clips:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
-              const SizedBox(height: 8),
-              for (int i = 1; i <= 5; i++)
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 8.0),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          speakerAudios[i] != null
-                              ? "Speaker $i: ${speakerAudios[i]!.name}"
-                              : "Speaker $i Voice Clip",
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: speakerAudios[i] != null ? Colors.greenAccent : Colors.grey,
-                          ),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF334155),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.mic, color: Colors.pinkAccent),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        customVoiceAudio != null
+                            ? "Voice: ${customVoiceAudio!.name}"
+                            : "Select Reference Audio (MP3/WAV)",
+                        style: TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                          color: customVoiceAudio != null ? Colors.greenAccent : Colors.white70,
                         ),
                       ),
-                      ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF334155)),
-                        icon: const Icon(Icons.mic, size: 16),
-                        label: Text(speakerAudios[i] != null ? "Change" : "Upload", style: const TextStyle(fontSize: 11)),
-                        onPressed: () => pickSpeakerAudio(i),
-                      ),
-                    ],
-                  ),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(backgroundColor: Colors.pinkAccent),
+                      onPressed: pickCustomAudio,
+                      child: Text(customVoiceAudio != null ? "Change" : "Browse"),
+                    ),
+                  ],
                 ),
+              ),
             ],
 
             const SizedBox(height: 20),
