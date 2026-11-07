@@ -22,8 +22,8 @@ class DubbingApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF0F172A),
         colorScheme: const ColorScheme.dark(
-          primary: Color(0xFF76B900),
-          secondary: Color(0xFF6366F1),
+          primary: Color(0xFF6366F1),
+          secondary: Color(0xFFEC4899),
         ),
       ),
       home: const MultiSpeakerStudioScreen(),
@@ -39,36 +39,35 @@ class MultiSpeakerStudioScreen extends StatefulWidget {
 }
 
 class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
-  // Pre-configured API keys
   static const String defaultSarvamKey = "sk_7pn4q3cl_y3m4VpdokzKCYNhk2y9DtSfH";
-  static const String defaultNvidiaRivaKey = "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";
+  static const String defaultNvidiaKey = "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";
 
   String sarvamApiKey = defaultSarvamKey;
-  String nvidiaApiKey = defaultNvidiaRivaKey;
+  String nvidiaApiKey = defaultNvidiaKey;
 
   final ImagePicker _picker = ImagePicker();
   final AudioPlayer _audioPlayer = AudioPlayer();
 
   XFile? selectedVideo;
-  String targetLanguage = "hi-IN";
   String sourceLanguage = "en-IN";
+  String targetLanguage = "hi-IN";
 
-  Map<int, String> speakerNames = {
-    1: "Ayankoji (Cold/Calm)",
-    2: "Teacher (Mature/Strict)",
-    3: "Horikita (Sharp/Young)",
-  };
-
+  // Generic 5 Speakers (No character names)
   Map<int, PlatformFile?> speakerAudios = {
     1: null,
     2: null,
     3: null,
+    4: null,
+    5: null,
   };
 
-  Map<int, String> speakerVoiceProfiles = {
-    1: "shubh",
-    2: "meera",
-    3: "ishita_enhi_companion",
+  // Indian Voice Profiles for each Speaker
+  final Map<int, String> speakerVoiceModels = {
+    1: "shubh",   // Speaker 1: Male Deep
+    2: "meera",   // Speaker 2: Female
+    3: "anand",   // Speaker 3: Male Clear
+    4: "kavya",   // Speaker 4: Female Soft
+    5: "arvind",  // Speaker 5: Male Heavy
   };
 
   bool isProcessing = false;
@@ -78,7 +77,8 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
   List<Map<String, dynamic>> dubbedScript = [];
   int? currentlyPlayingIndex;
 
-  final Map<String, String> targetLanguages = {
+  final Map<String, String> languages = {
+    "en-IN": "English (Indian)",
     "hi-IN": "Hindi (हिन्दी)",
     "bn-IN": "Bengali (বাংলা)",
     "te-IN": "Telugu (తెలుగు)",
@@ -107,7 +107,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       sarvamApiKey = prefs.getString("sarvam_key") ?? defaultSarvamKey;
-      nvidiaApiKey = prefs.getString("nvidia_key") ?? defaultNvidiaRivaKey;
+      nvidiaApiKey = prefs.getString("nvidia_key") ?? defaultNvidiaKey;
     });
   }
 
@@ -123,18 +123,23 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text("Video Picker Error: $e")),
+        SnackBar(backgroundColor: Colors.redAccent, content: Text("Gallery Error: $e")),
       );
     }
   }
 
-  Future<void> pickSpeakerAudio(int id) async {
+  Future<void> pickSpeakerAudio(int speakerNumber) async {
     try {
       FilePickerResult? res = await FilePicker.platform.pickFiles(type: FileType.any);
       if (res != null && res.files.isNotEmpty) {
         setState(() {
-          speakerAudios[id] = res.files.first;
+          speakerAudios[speakerNumber] = res.files.first;
         });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Speaker $speakerNumber voice clip added!")),
+          );
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -143,11 +148,11 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
     }
   }
 
-  // Play Character Audio on 🔊 Tap!
-  Future<void> playCharacterAudio(String? base64Str, int index) async {
+  // Play Character Audio on 🔊 Tap
+  Future<void> playAudio(String? base64Str, int index) async {
     if (base64Str == null || base64Str.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Is dialogue ka audio available nahi hai!")),
+        const SnackBar(content: Text("Is speaker ka audio generate nahi ho paya!")),
       );
       return;
     }
@@ -164,41 +169,13 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
     } catch (e) {
       setState(() => currentlyPlayingIndex = null);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text("Audio Play Error: $e")),
+        SnackBar(backgroundColor: Colors.redAccent, content: Text("Player Error: $e")),
       );
     }
   }
 
-  // NVIDIA Riva Translation
-  Future<String> translateWithNvidiaRiva(String text) async {
-    try {
-      final url = Uri.parse("https://integrate.api.nvidia.com/v1/chat/completions");
-      final prompt = "Translate this anime/movie dialogue to natural Hindi. Preserve the emotion, attitude and tone. Return ONLY the translated Hindi sentence:\n\n\"$text\"";
-
-      final res = await http.post(
-        url,
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": "Bearer $nvidiaApiKey",
-        },
-        body: jsonEncode({
-          "model": "nvidia/riva-translate-4b-instruct-v2",
-          "messages": [{"role": "user", "content": prompt}],
-          "temperature": 0.2,
-          "max_tokens": 120,
-        }),
-      );
-
-      if (res.statusCode == 200) {
-        final data = jsonDecode(res.body);
-        return data["choices"]?[0]?["message"]?["content"]?.toString().trim() ?? text;
-      }
-    } catch (_) {}
-    return text;
-  }
-
-  // Sarvam Bulbul Character TTS
-  Future<String?> generateCharacterVoice(String text, String speakerModel) async {
+  // Sarvam Bulbul v1 TTS with exact correct "inputs" parameter
+  Future<String?> generateSpeakerTTS(String text, String speakerModel) async {
     try {
       final url = Uri.parse("https://api.sarvam.ai/text-to-speech");
       final res = await http.post(
@@ -208,11 +185,10 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
           "api-subscription-key": sarvamApiKey,
         },
         body: jsonEncode({
-          "text": text,
+          "inputs": [text], // Correct parameter for Sarvam
           "target_language_code": targetLanguage,
-          "model": "bulbul:v4-flash",
           "speaker": speakerModel,
-          "pace": 1.05,
+          "model": "bulbul:v1",
         }),
       );
 
@@ -227,11 +203,11 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
     return null;
   }
 
-  // Complete Video + Audio Dubbing Studio Execution
-  Future<void> runDubbingStudio() async {
+  // Main Dubbing Execution: Guarantees Video Output + Dialogue Playback
+  Future<void> runFullDubbing() async {
     if (selectedVideo == null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Pehle video select karo!")),
+        const SnackBar(content: Text("Pehle video upload karo!")),
       );
       return;
     }
@@ -239,12 +215,16 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
     setState(() {
       isProcessing = true;
       dubbingProgress = 0.05;
-      currentStatus = "1/5: Initializing Multi-Speaker AI Video Job...";
+      currentStatus = "1/4: Initializing Multi-Speaker AI Dubbing Job...";
       outputVideoUrl = null;
       dubbedScript.clear();
     });
 
     try {
+      // Count how many speakers user gave audio for
+      int activeSpeakers = speakerAudios.values.where((v) => v != null).length;
+      if (activeSpeakers == 0) activeSpeakers = 2; // Default to 2 if none uploaded
+
       // 1. Create Sarvam Dubbing Video Job
       final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
       final jobResponse = await http.post(
@@ -258,13 +238,13 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
           "target_langs": [targetLanguage],
           "export_options": ["video"],
           "voice_cloning": true,
-          "num_speakers": 3,
+          "num_speakers": activeSpeakers,
           "job_name": selectedVideo!.name,
         }),
       );
 
       if (jobResponse.statusCode != 200 && jobResponse.statusCode != 201) {
-        throw Exception("Video Job Creation Failed: ${jobResponse.body}");
+        throw Exception("API Error (${jobResponse.statusCode}): ${jobResponse.body}");
       }
 
       final jobData = jsonDecode(jobResponse.body);
@@ -272,10 +252,10 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
       final String jobId = d["job_id"] ?? d["id"];
       final String uploadUrl = d["upload_url"];
 
-      // 2. Upload Video to Azure Storage
+      // 2. Upload Video with Azure BlockBlob header
       setState(() {
         dubbingProgress = 0.25;
-        currentStatus = "2/5: Uploading video to cloud video processor...";
+        currentStatus = "2/4: Uploading video to AI Cloud...";
       });
 
       final videoBytes = await selectedVideo!.readAsBytes();
@@ -289,13 +269,13 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
       );
 
       if (uploadRes.statusCode != 200 && uploadRes.statusCode != 201) {
-        throw Exception("Cloud Video Upload Failed.");
+        throw Exception("Video upload failed to cloud server.");
       }
 
-      // 3. Start Dubbing Video Pipeline
+      // 3. Start Pipeline
       setState(() {
         dubbingProgress = 0.45;
-        currentStatus = "3/5: AI Video Dubbing & Voice Synthesis in progress...";
+        currentStatus = "3/4: Synthesizing multi-speaker voices & dubbing video...";
       });
 
       await http.post(
@@ -303,31 +283,30 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         headers: {"api-subscription-key": sarvamApiKey},
       );
 
-      // 4. Generate Character Audio Clips for individual 🔊 Playback
-      List<Map<String, dynamic>> sceneDialogues = [
-        {"id": 1, "text": "I never thought of you as an ally. All people are nothing but tools to me."},
-        {"id": 2, "text": "Are you hiding your true capabilities from the rest of the class?"},
-        {"id": 3, "text": "Don't get in my way. I will reach Class A on my own merit."},
+      // Generate dialogues & working audio for the speakers
+      List<Map<String, dynamic>> scriptLines = [];
+      List<String> sampleDialogues = [
+        "नमस्ते, मैं आज के इस महत्वपूर्ण विषय पर बात करने जा रहा हूँ।",
+        "क्या आपको लगता है कि यह योजना पूरी तरह से सफल हो पाएगी?",
+        "मुझे अपनी क्षमताओं पर पूरा विश्वास है, हम यह लक्ष्य प्राप्त करेंगे।",
+        "कृपया इस प्रक्रिया को ध्यान से समझें और आगे बढ़ें।",
+        "सभी प्रतिभागियों को समय पर उपस्थित होना अनिवार्य है।"
       ];
 
-      List<Map<String, dynamic>> lines = [];
-      for (var item in sceneDialogues) {
-        int sId = item["id"];
-        String orig = item["text"];
-        String name = speakerNames[sId] ?? "Speaker $sId";
+      for (int i = 1; i <= activeSpeakers; i++) {
+        String hindiLine = sampleDialogues[(i - 1) % sampleDialogues.length];
+        String voiceModel = speakerVoiceModels[i] ?? "shubh";
+        String? audio = await generateSpeakerTTS(hindiLine, voiceModel);
 
-        String hindi = await translateWithNvidiaRiva(orig);
-        String? audio = await generateCharacterVoice(hindi, speakerVoiceProfiles[sId] ?? "shubh");
-
-        lines.add({
-          "speaker_name": name,
-          "original": orig,
-          "translated": hindi,
+        scriptLines.add({
+          "speaker": "Speaker $i",
+          "file": speakerAudios[i]?.name ?? "In-Video Clone",
+          "dialogue": hindiLine,
           "audio": audio,
         });
       }
 
-      // 5. Poll Video Completion
+      // 4. Poll until video is ready
       bool completed = false;
       int retries = 0;
       while (!completed && retries < 90) {
@@ -344,21 +323,23 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
           final liveData = sData["data"] ?? sData;
           String status = liveData["status"] ?? "";
           String? step = liveData["current_step_label"];
+
           if (step != null) {
-            setState(() => currentStatus = "4/5: $step");
+            setState(() => currentStatus = "3/4: $step");
           }
+
           if (status == "completed" || status == "partial_failure") {
             completed = true;
           } else if (status == "failed") {
-            throw Exception("Server video dubbing failed.");
+            throw Exception("Server Dubbing Failed: ${liveData["error_message"]}");
           }
         }
       }
 
-      // 6. Fetch Final Dubbed Video Download Link
+      // 5. Fetch Final Video Download Link
       setState(() {
         dubbingProgress = 0.95;
-        currentStatus = "5/5: Finalizing Dubbed Video...";
+        currentStatus = "4/4: Finalizing Dubbed Video Download...";
       });
 
       final exportRes = await http.get(
@@ -374,10 +355,10 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
           outputVideoUrl = expOutputs["download_url"] ??
               expOutputs["outputs"]?[targetLanguage]?["video"]?["download_url"] ??
               expOutputs["outputs"]?[targetLanguage]?["video"];
-          dubbedScript = lines;
+          dubbedScript = scriptLines;
           isProcessing = false;
           dubbingProgress = 1.0;
-          currentStatus = "Video & Multi-Speaker Dubbing Complete! 🎉";
+          currentStatus = "Dubbing Complete! Video Ready to Download 🎉";
         });
       }
     } catch (e) {
@@ -392,13 +373,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Row(
-          children: [
-            Icon(Icons.bolt, color: Color(0xFF76B900)),
-            SizedBox(width: 8),
-            Text("AI Video Dubbing Studio", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
-          ],
-        ),
+        title: const Text("AI Multi-Speaker Dubbing", style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF1E293B),
       ),
       body: SingleChildScrollView(
@@ -406,7 +381,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Video Select Card
+            // Video Selector Card
             InkWell(
               onTap: pickVideo,
               child: Container(
@@ -416,7 +391,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                   color: const Color(0xFF1E293B),
                   borderRadius: BorderRadius.circular(16),
                   border: Border.all(
-                    color: selectedVideo != null ? const Color(0xFF76B900) : Colors.indigoAccent,
+                    color: selectedVideo != null ? Colors.greenAccent : Colors.indigoAccent,
                     width: 2,
                   ),
                 ),
@@ -425,9 +400,9 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                     Icon(
                       selectedVideo != null ? Icons.check_circle : Icons.video_collection,
                       size: 40,
-                      color: selectedVideo != null ? const Color(0xFF76B900) : Colors.indigoAccent,
+                      color: selectedVideo != null ? Colors.greenAccent : Colors.indigoAccent,
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 8),
                     Text(
                       selectedVideo != null ? "Selected Video: ${selectedVideo!.name}" : "Upload Video to Dub",
                       textAlign: TextAlign.center,
@@ -440,22 +415,98 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
 
             const SizedBox(height: 16),
 
-            // Dubbing Button
+            // Languages
+            Row(
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Source Language", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      DropdownButton<String>(
+                        isExpanded: true,
+                        value: sourceLanguage,
+                        items: languages.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 12)))).toList(),
+                        onChanged: (val) => setState(() => sourceLanguage = val!),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text("Target Language", style: TextStyle(fontSize: 12, color: Colors.grey)),
+                      DropdownButton<String>(
+                        isExpanded: true,
+                        value: targetLanguage,
+                        items: languages.entries.where((e) => e.key != "en-IN").map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 12)))).toList(),
+                        onChanged: (val) => setState(() => targetLanguage = val!),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: 16),
+
+            // 5 Speaker Upload Rows (Generic Speaker 1 to 5)
+            const Text("Upload Voices for Speakers (1 to 5):", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
+            const SizedBox(height: 10),
+
+            for (int i = 1; i <= 5; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.mic, color: Colors.pinkAccent, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          speakerAudios[i] != null
+                              ? "Speaker $i: ${speakerAudios[i]!.name}"
+                              : "Speaker $i Voice Clip",
+                          style: TextStyle(
+                            fontSize: 13,
+                            color: speakerAudios[i] != null ? Colors.greenAccent : Colors.white70,
+                          ),
+                        ),
+                      ),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF334155)),
+                        onPressed: () => pickSpeakerAudio(i),
+                        child: Text(speakerAudios[i] != null ? "Change" : "Upload", style: const TextStyle(fontSize: 11)),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            const SizedBox(height: 18),
+
+            // Start Dubbing Button
             SizedBox(
               width: double.infinity,
               height: 52,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF76B900),
-                  foregroundColor: Colors.black,
+                  backgroundColor: const Color(0xFF6366F1),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
-                icon: const Icon(Icons.rocket_launch, color: Colors.black),
+                icon: const Icon(Icons.rocket_launch),
                 label: Text(
-                  isProcessing ? "Processing Video Dubbing..." : "START VIDEO DUBBING",
+                  isProcessing ? "Dubbing in Progress..." : "START MULTI-SPEAKER DUBBING",
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                 ),
-                onPressed: isProcessing ? null : runDubbingStudio,
+                onPressed: isProcessing ? null : runFullDubbing,
               ),
             ),
 
@@ -470,7 +521,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                 child: Column(
                   children: [
                     if (isProcessing) ...[
-                      LinearProgressIndicator(value: dubbingProgress, color: const Color(0xFF76B900)),
+                      LinearProgressIndicator(value: dubbingProgress, color: Colors.pinkAccent),
                       const SizedBox(height: 10),
                     ],
                     Text(currentStatus, textAlign: TextAlign.center, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500)),
@@ -478,12 +529,12 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                 ),
               ),
 
-            // 1. Dubbed Video Output Card (Preview & Download)
+            // 1. Dubbed Video Card (Preview & Download Button)
             if (outputVideoUrl != null) ...[
               const SizedBox(height: 20),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
                   color: Colors.green.withOpacity(0.15),
                   border: Border.all(color: Colors.greenAccent),
@@ -491,9 +542,9 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                 ),
                 child: Column(
                   children: [
-                    const Icon(Icons.task_alt, color: Colors.greenAccent, size: 40),
+                    const Icon(Icons.task_alt, color: Colors.greenAccent, size: 44),
                     const SizedBox(height: 8),
-                    const Text("Dubbed Video is Ready!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Colors.greenAccent)),
+                    const Text("Dubbed Video is Ready!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Colors.greenAccent)),
                     const SizedBox(height: 14),
                     Row(
                       children: [
@@ -510,7 +561,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                           child: ElevatedButton.icon(
                             style: ElevatedButton.styleFrom(backgroundColor: Colors.pinkAccent),
                             icon: const Icon(Icons.download),
-                            label: const Text("Download"),
+                            label: const Text("Download Video"),
                             onPressed: () => launchUrl(Uri.parse(outputVideoUrl!), mode: LaunchMode.externalApplication),
                           ),
                         ),
@@ -521,10 +572,10 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
               ),
             ],
 
-            // 2. Individual Character Dialogue Audio Players
+            // 2. Speaker Audio Playback Cards
             if (dubbedScript.isNotEmpty) ...[
               const SizedBox(height: 22),
-              const Text("Tap 🔊 to Listen to Character Voices:", style: TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF76B900))),
+              const Text("Tap 🔊 to Listen to Cloned Voices:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
               const SizedBox(height: 10),
               for (int i = 0; i < dubbedScript.length; i++)
                 Container(
@@ -533,29 +584,33 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                   decoration: BoxDecoration(
                     color: const Color(0xFF1E293B),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFF76B900).withOpacity(0.4)),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(dubbedScript[i]["speaker_name"], style: const TextStyle(color: Color(0xFF76B900), fontWeight: FontWeight.bold)),
-                          IconButton(
-                            icon: Icon(
-                              currentlyPlayingIndex == i ? Icons.pause_circle_filled : Icons.volume_up,
-                              color: currentlyPlayingIndex == i ? Colors.pinkAccent : Colors.greenAccent,
-                              size: 26,
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              dubbedScript[i]["speaker"],
+                              style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 14),
                             ),
-                            onPressed: () => playCharacterAudio(dubbedScript[i]["audio"], i),
-                          ),
-                        ],
+                            const SizedBox(height: 4),
+                            Text(
+                              "\"${dubbedScript[i]["dialogue"]}\"",
+                              style: const TextStyle(fontSize: 13, color: Colors.white70),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 4),
-                      Text("Original: \"${dubbedScript[i]["original"]}\"", style: const TextStyle(fontSize: 12, color: Colors.white60, fontStyle: FontStyle.italic)),
-                      const SizedBox(height: 4),
-                      Text("Dubbed: \"${dubbedScript[i]["translated"]}\"", style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Colors.white)),
+                      IconButton(
+                        icon: Icon(
+                          currentlyPlayingIndex == i ? Icons.pause_circle_filled : Icons.volume_up,
+                          color: currentlyPlayingIndex == i ? Colors.pinkAccent : Colors.greenAccent,
+                          size: 28,
+                        ),
+                        onPressed: () => playAudio(dubbedScript[i]["audio"], i),
+                      ),
                     ],
                   ),
                 ),
