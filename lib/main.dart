@@ -174,7 +174,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
     });
 
     try {
-      // 1. Correct Endpoint and Exact Required Fields: src_lang & target_langs
+      // 1. Create Job on Sarvam AI
       final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
       
       final Map<String, dynamic> requestBody = {
@@ -204,7 +204,7 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       final String jobId = data["job_id"] ?? data["id"];
       final String uploadUrl = data["upload_url"];
 
-      // 2. Upload video bytes to signed upload_url
+      // 2. Upload video bytes to Azure Storage (WITH REQUIRED x-ms-blob-type HEADER!)
       setState(() {
         dubbingProgress = 0.35;
         statusMessage = "2/4: Uploading video & analyzing voices...";
@@ -213,12 +213,15 @@ class _DubbingHomeScreenState extends State<DubbingHomeScreen> {
       final videoBytes = await rawVideoFile!.readAsBytes();
       final uploadResponse = await http.put(
         Uri.parse(uploadUrl),
-        headers: {"Content-Type": "application/octet-stream"},
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "x-ms-blob-type": "BlockBlob", // <-- FIX FOR CLOUD STORAGE!
+        },
         body: videoBytes,
       );
 
       if (uploadResponse.statusCode != 200 && uploadResponse.statusCode != 201) {
-        throw Exception("Video upload failed to cloud storage.");
+        throw Exception("Video upload failed (${uploadResponse.statusCode}): ${uploadResponse.body}");
       }
 
       // 3. Start Dubbing Pipeline
