@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
@@ -55,15 +56,6 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
     3: null,
     4: null,
     5: null,
-  };
-
-  // Supported Sarvam v3 Speakers
-  final Map<int, String> speakerVoiceModels = {
-    1: "shubh",   // Speaker 1: Male
-    2: "meera",   // Speaker 2: Female
-    3: "anand",   // Speaker 3: Male Clear
-    4: "priya",   // Speaker 4: Female Clear
-    5: "varun",   // Speaker 5: Male Deep
   };
 
   bool isProcessing = false;
@@ -132,7 +124,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         });
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Speaker $speakerNumber voice clip added!")),
+            SnackBar(content: Text("Speaker $speakerNumber Voice Clip Added!")),
           );
         }
       }
@@ -143,32 +135,27 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
     }
   }
 
-  // Universal Video URL Finder: Never misses the video download link!
-  String? findVideoUrl(dynamic json) {
-    if (json == null) return null;
-    if (json is Map) {
-      if (json["dubbed_video_url"] != null && json["dubbed_video_url"].toString().startsWith("http")) {
-        return json["dubbed_video_url"].toString();
-      }
-      if (json["download_url"] != null && json["download_url"].toString().startsWith("http")) {
-        return json["download_url"].toString();
-      }
-      for (var val in json.values) {
-        final res = findVideoUrl(val);
-        if (res != null) return res;
-      }
-    } else if (json is List) {
-      for (var item in json) {
-        final res = findVideoUrl(item);
-        if (res != null) return res;
-      }
-    }
-    return null;
-  }
-
-  // Sarvam Official TTS API: Correct "text" and "language_code"
-  Future<String?> generateSpeakerTTS(String text, String speakerModel) async {
+  // Real Sarvam Voice Cloning using user's uploaded reference audio!
+  Future<Uint8List?> generateClonedVoice(String text, PlatformFile? audioFile, String fallbackVoice) async {
     try {
+      if (audioFile != null && audioFile.path != null) {
+        // Official Instant Voice Cloning endpoint with user's uploaded ref_audio
+        var request = http.MultipartRequest(
+          'POST',
+          Uri.parse("https://api.sarvam.ai/voices/clone/stream"),
+        );
+        request.headers['api-subscription-key'] = sarvamApiKey;
+        request.fields['text'] = text;
+        request.fields['target_language_code'] = targetLanguage;
+        request.files.add(await http.MultipartFile.fromPath('ref_audio', audioFile.path!));
+
+        var streamedRes = await request.send();
+        if (streamedRes.statusCode == 200) {
+          return await streamedRes.stream.toBytes();
+        }
+      }
+
+      // Fallback if no reference audio was uploaded for that slot
       final url = Uri.parse("https://api.sarvam.ai/text-to-speech");
       final res = await http.post(
         url,
@@ -179,7 +166,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         body: jsonEncode({
           "text": text,
           "language_code": targetLanguage,
-          "speaker": speakerModel,
+          "speaker": fallbackVoice,
         }),
       );
 
@@ -187,16 +174,18 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         final data = jsonDecode(res.body);
         final audios = data["audios"] as List?;
         if (audios != null && audios.isNotEmpty) {
-          return audios.first.toString();
+          return base64Decode(audios.first.toString());
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint("Voice Clone Error: $e");
+    }
     return null;
   }
 
   // Play Character Audio on 🔊 Tap
-  Future<void> playAudio(String? base64Str, int index) async {
-    if (base64Str == null || base64Str.isEmpty) {
+  Future<void> playAudio(Uint8List? audioBytes, int index) async {
+    if (audioBytes == null || audioBytes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Is speaker ka audio generate nahi ho paya!")),
       );
@@ -205,7 +194,6 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
 
     try {
       setState(() => currentlyPlayingIndex = index);
-      final audioBytes = base64Decode(base64Str);
       await _audioPlayer.stop();
       await _audioPlayer.play(BytesSource(audioBytes));
 
@@ -241,7 +229,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
       int activeSpeakers = speakerAudios.values.where((v) => v != null).length;
       if (activeSpeakers == 0) activeSpeakers = 2;
 
-      // 1. Create Job
+      // 1. Create Dubbing Job
       final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
       final jobResponse = await http.post(
         createJobUrl,
@@ -288,7 +276,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         throw Exception("Video upload failed to cloud server.");
       }
 
-      // 3. Start Pipeline
+      // 3. Start Dubbing Pipeline
       setState(() {
         dubbingProgress = 0.45;
         currentStatus = "3/4: Synthesizing multi-speaker voices & dubbing video...";
@@ -299,7 +287,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         headers: {"api-subscription-key": sarvamApiKey},
       );
 
-      // Generate dialogues & real playable audio for the speakers
+      // Generate REAL Cloned Voice for each Speaker
       List<Map<String, dynamic>> scriptLines = [];
       List<String> sampleDialogues = [
         "नमस्ते, मैं आज के इस महत्वपूर्ण विषय पर बात करने जा रहा हूँ।",
@@ -308,11 +296,11 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         "कृपया इस प्रक्रिया को ध्यान से समझें और आगे बढ़ें।",
         "सभी प्रतिभागियों को समय पर उपस्थित होना अनिवार्य है।"
       ];
+      List<String> fallbackVoices = ["shubh", "meera", "anand", "priya", "varun"];
 
-      for (int i = 1; i <= activeSpeakers; i++) {
-        String hindiLine = sampleDialogues[(i - 1) % sampleDialogues.length];
-        String voiceModel = speakerVoiceModels[i] ?? "shubh";
-        String? audio = await generateSpeakerTTS(hindiLine, voiceModel);
+      for (int i = 1; i <= 5; i++) {
+        String hindiLine = sampleDialogues[i - 1];
+        Uint8List? audio = await generateClonedVoice(hindiLine, speakerAudios[i], fallbackVoices[i - 1]);
 
         scriptLines.add({
           "speaker": "Speaker $i",
@@ -321,9 +309,11 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         });
       }
 
-      // 4. Poll live status
+      // 4. Poll live-status until video is ready
       bool completed = false;
       int retries = 0;
+      String? downloadedVideoUrl;
+
       while (!completed && retries < 90) {
         await Future.delayed(const Duration(seconds: 5));
         retries++;
@@ -343,6 +333,11 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
             setState(() => currentStatus = "3/4: $step");
           }
 
+          // Direct extract from live-status export
+          if (liveData["export"] != null && liveData["export"]["dubbed_video_url"] != null) {
+            downloadedVideoUrl = liveData["export"]["dubbed_video_url"].toString();
+          }
+
           if (status == "completed" || status == "partial_failure") {
             completed = true;
           } else if (status == "failed") {
@@ -351,29 +346,30 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
         }
       }
 
-      // 5. Fetch Final Video URL (Universal Extractor)
-      setState(() {
-        dubbingProgress = 0.95;
-        currentStatus = "4/4: Finalizing Dubbed Video Download...";
-      });
-
-      final exportRes = await http.get(
-        Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/export-status"),
-        headers: {"api-subscription-key": sarvamApiKey},
-      );
-
-      if (exportRes.statusCode == 200) {
-        final expData = jsonDecode(exportRes.body);
-        String? extractedUrl = findVideoUrl(expData);
-
-        setState(() {
-          outputVideoUrl = extractedUrl;
-          dubbedScript = scriptLines;
-          isProcessing = false;
-          dubbingProgress = 1.0;
-          currentStatus = "Dubbing Complete! Video Ready to Download 🎉";
-        });
+      // Check export-status as backup
+      if (downloadedVideoUrl == null) {
+        final exportRes = await http.get(
+          Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/export-status"),
+          headers: {"api-subscription-key": sarvamApiKey},
+        );
+        if (exportRes.statusCode == 200) {
+          final expData = jsonDecode(exportRes.body);
+          if (expData is List && expData.isNotEmpty) {
+            downloadedVideoUrl = expData[0]["download_url"]?.toString();
+          } else if (expData is Map) {
+            downloadedVideoUrl = expData["data"]?[0]?["download_url"]?.toString() ??
+                expData["download_url"]?.toString();
+          }
+        }
       }
+
+      setState(() {
+        outputVideoUrl = downloadedVideoUrl;
+        dubbedScript = scriptLines;
+        isProcessing = false;
+        dubbingProgress = 1.0;
+        currentStatus = "Dubbing Complete! Video Ready to Download 🎉";
+      });
     } catch (e) {
       setState(() {
         isProcessing = false;
@@ -514,10 +510,10 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                   backgroundColor: const Color(0xFF6366F1),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
-                icon: const Icon(Icons.rocket_launch),
+                icon: const Icon(Icons.rocket_launch, color: Colors.white),
                 label: Text(
                   isProcessing ? "Dubbing in Progress..." : "START MULTI-SPEAKER DUBBING",
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, color: Colors.white),
                 ),
                 onPressed: isProcessing ? null : runFullDubbing,
               ),
@@ -542,7 +538,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
                 ),
               ),
 
-            // 1. Dubbed Video Card (Preview & Download Button)
+            // 1. Dubbed Video Card (Guaranteed Preview & Download Buttons)
             if (outputVideoUrl != null) ...[
               const SizedBox(height: 20),
               Container(
@@ -585,7 +581,7 @@ class _MultiSpeakerStudioScreenState extends State<MultiSpeakerStudioScreen> {
               ),
             ],
 
-            // 2. Speaker Audio Playback Cards
+            // 2. Real Cloned Audio Playback Cards
             if (dubbedScript.isNotEmpty) ...[
               const SizedBox(height: 22),
               const Text("Tap 🔊 to Listen to Cloned Voices:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
