@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart'; // <-- Added for Video MIME type
 import 'package:image_picker/image_picker.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,23 +57,11 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
   String sourceLanguage = "en";
   String targetLanguage = "hi";
 
-  bool isElevenCustomVoice = false;
-
-  Map<int, PlatformFile?> speakerAudios = {
-    1: null,
-    2: null,
-    3: null,
-    4: null,
-    5: null,
-  };
-
   bool isProcessing = false;
   String currentStatus = "";
   double dubbingProgress = 0.0;
   String? outputVideoUrl;
   Uint8List? dubbedVideoBytes;
-  List<Map<String, dynamic>> dubbedScript = [];
-  int? currentlyPlayingIndex;
 
   final Map<String, String> languages = {
     "en": "English",
@@ -174,32 +163,11 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
           selectedVideo = video;
           outputVideoUrl = null;
           dubbedVideoBytes = null;
-          dubbedScript.clear();
         });
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(backgroundColor: Colors.redAccent, content: Text("Gallery Error: $e")),
-      );
-    }
-  }
-
-  Future<void> pickSpeakerAudio(int speakerNumber) async {
-    try {
-      FilePickerResult? res = await FilePicker.platform.pickFiles(type: FileType.any);
-      if (res != null && res.files.isNotEmpty) {
-        setState(() {
-          speakerAudios[speakerNumber] = res.files.first;
-        });
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text("Speaker $speakerNumber Audio Uploaded!")),
-          );
-        }
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text("Audio Error: $e")),
       );
     }
   }
@@ -265,17 +233,16 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
       currentStatus = "1/4: Connecting to ${selectedEngine == "elevenlabs" ? "ElevenLabs Dubbing v2" : "Sarvam AI"}...";
       outputVideoUrl = null;
       dubbedVideoBytes = null;
-      dubbedScript.clear();
     });
 
     try {
       if (selectedEngine == "elevenlabs") {
         // ==========================================
-        // 🟣 ELEVENLABS DUBBING V2 (WITH WATERMARK FOR FREE TIER)
+        // 🟣 ELEVENLABS DUBBING V2
         // ==========================================
         setState(() {
           dubbingProgress = 0.20;
-          currentStatus = "2/4: Uploading video to ElevenLabs Dubbing Studio...";
+          currentStatus = "2/4: Uploading MP4 video to ElevenLabs...";
         });
 
         var dubRequest = http.MultipartRequest(
@@ -284,12 +251,23 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
         );
         dubRequest.headers['xi-api-key'] = elevenLabsKey;
         dubRequest.fields['mode'] = "automatic";
-        dubRequest.fields['name'] = "Dubbing_Studio_${DateTime.now().millisecondsSinceEpoch}";
+        dubRequest.fields['name'] = "Dubbing_${DateTime.now().millisecondsSinceEpoch}";
         dubRequest.fields['target_lang'] = targetLanguage;
         dubRequest.fields['source_lang'] = sourceLanguage;
-        dubRequest.fields['watermark'] = "true"; // <-- FIX: Free Tier Watermark Enabled!
-        dubRequest.fields['num_speakers'] = "0"; // Auto-detect multiple speakers
-        dubRequest.files.add(await http.MultipartFile.fromPath('file', selectedVideo!.path));
+        dubRequest.fields['watermark'] = "true";
+        dubRequest.fields['num_speakers'] = "0";
+
+        // Determine exact MIME type (video/mp4)
+        String ext = selectedVideo!.path.split('.').last.toLowerCase();
+        String subType = (ext == 'mov') ? 'quicktime' : (ext == 'webm' ? 'webm' : 'mp4');
+
+        dubRequest.files.add(
+          await http.MultipartFile.fromPath(
+            'file',
+            selectedVideo!.path,
+            contentType: MediaType('video', subType), // <-- FIX: Explicit video/mp4 MIME type!
+          ),
+        );
 
         var dubStreamedRes = await dubRequest.send();
         var dubRes = await http.Response.fromStream(dubStreamedRes);
@@ -318,7 +296,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
           if (statusRes.statusCode == 200) {
             final sData = jsonDecode(statusRes.body);
             String s = sData["status"]?.toString() ?? "";
-            setState(() => currentStatus = "ElevenLabs Dubbing: $s (processing...)");
+            setState(() => currentStatus = "ElevenLabs Dubbing: $s (in progress...)");
 
             if (s == "dubbed") {
               isReady = true;
@@ -328,7 +306,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
           }
         }
 
-        // Download dubbed video file
+        // Download dubbed video file from ElevenLabs
         setState(() {
           dubbingProgress = 0.90;
           currentStatus = "4/4: Downloading dubbed video from ElevenLabs...";
@@ -349,7 +327,9 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
           currentStatus = "ElevenLabs Dubbing Complete! Video Ready to Download 🎉";
         });
       } else {
-        // Sarvam AI Pipeline
+        // ==========================================
+        // 🟢 SARVAM AI PIPELINE
+        // ==========================================
         setState(() {
           dubbingProgress = 0.30;
           currentStatus = "2/4: Uploading video to Sarvam AI...";
@@ -532,7 +512,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
               ),
               child: Text(
                 selectedEngine == "elevenlabs"
-                    ? "ElevenLabs Dubbing v2: Free Watermarked Dubbing Active (No paid subscription required)."
+                    ? "ElevenLabs Dubbing v2: Free Watermarked Dubbing Active."
                     : "Sarvam AI Active: In-Video Voice Dubbing (Zero custom voice upload needed).",
                 style: TextStyle(
                   fontSize: 12,
