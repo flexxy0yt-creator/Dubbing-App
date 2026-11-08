@@ -17,7 +17,7 @@ class DubbingApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'AI In-Video Voice Clone & Dubbing',
+      title: 'AI Multi-Engine Video Dubbing',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF0F172A),
@@ -26,25 +26,28 @@ class DubbingApp extends StatelessWidget {
           secondary: Color(0xFF10B981),
         ),
       ),
-      home: const GeminiVoiceCloneScreen(),
+      home: const MultiEngineStudioScreen(),
     );
   }
 }
 
-class GeminiVoiceCloneScreen extends StatefulWidget {
-  const GeminiVoiceCloneScreen({super.key});
+class MultiEngineStudioScreen extends StatefulWidget {
+  const MultiEngineStudioScreen({super.key});
 
   @override
-  State<GeminiVoiceCloneScreen> createState() => _GeminiVoiceCloneScreenState();
+  State<MultiEngineStudioScreen> createState() => _MultiEngineStudioScreenState();
 }
 
-class _GeminiVoiceCloneScreenState extends State<GeminiVoiceCloneScreen> {
-  // Push-Protection Safe Encoded Keys
-  static final String defaultGeminiKey = utf8.decode(base64Decode("QVEuQWI4Uk42SjJvUXJsVGNWeEpoNTlFM0RIUGxrQ3dYS1lMMjRUbnN0QlhTLXh1VkMtdWc="));
-  static final String defaultSarvamKey = utf8.decode(base64Decode("c2tfN3BuNHEzY2xfeTNtNFZwZG9remtDWU5oazJ5OUR0U2ZI"));
+class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
+  // Correct Exact Sarvam Key & Gemini Key
+  static const String defaultSarvamKey = "sk_7pn4q3cl_y3m4VpdokzKCYNhk2y9DtSfH";
+  static const String defaultGeminiKey = "AQ.Ab8RN6J2oQrlTcVxJh59E3DHPlkCwXKYL24TnstBXS-xuVC-ug";
 
-  String geminiApiKey = defaultGeminiKey;
   String sarvamApiKey = defaultSarvamKey;
+  String geminiApiKey = defaultGeminiKey;
+
+  // Selected Engine: "sarvam" ya "gemini"
+  String selectedEngine = "sarvam";
 
   final ImagePicker _picker = ImagePicker();
   XFile? selectedVideo;
@@ -80,24 +83,30 @@ class _GeminiVoiceCloneScreenState extends State<GeminiVoiceCloneScreen> {
   Future<void> _loadKeys() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
+      String? savedSarvam = prefs.getString("sarvam_key");
+      // Force correct key if old corrupted key was saved
+      if (savedSarvam == null || savedSarvam.contains("zmCYN")) {
+        sarvamApiKey = defaultSarvamKey;
+      } else {
+        sarvamApiKey = savedSarvam;
+      }
       geminiApiKey = prefs.getString("gemini_key") ?? defaultGeminiKey;
-      sarvamApiKey = prefs.getString("sarvam_key") ?? defaultSarvamKey;
     });
   }
 
-  Future<void> _saveKeys(String gKey, String sKey) async {
+  Future<void> _saveKeys(String sKey, String gKey) async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString("gemini_key", gKey.trim());
     await prefs.setString("sarvam_key", sKey.trim());
+    await prefs.setString("gemini_key", gKey.trim());
     setState(() {
-      geminiApiKey = gKey.trim();
       sarvamApiKey = sKey.trim();
+      geminiApiKey = gKey.trim();
     });
   }
 
   void _showSettingsDialog() {
-    final gController = TextEditingController(text: geminiApiKey);
     final sController = TextEditingController(text: sarvamApiKey);
+    final gController = TextEditingController(text: geminiApiKey);
 
     showDialog(
       context: context,
@@ -114,19 +123,19 @@ class _GeminiVoiceCloneScreenState extends State<GeminiVoiceCloneScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            const Text("Sarvam AI Key (Dubbing Engine):", style: TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 4),
+            TextField(controller: sController, decoration: const InputDecoration(border: OutlineInputBorder())),
+            const SizedBox(height: 12),
             const Text("Gemini API Key (Google AI Studio):", style: TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 4),
             TextField(controller: gController, decoration: const InputDecoration(border: OutlineInputBorder())),
-            const SizedBox(height: 12),
-            const Text("Sarvam AI Key (Dubbing & Cloning Engine):", style: TextStyle(fontSize: 12, color: Colors.grey)),
-            const SizedBox(height: 4),
-            TextField(controller: sController, decoration: const InputDecoration(border: OutlineInputBorder())),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () {
-              _saveKeys(defaultGeminiKey, defaultSarvamKey);
+              _saveKeys(defaultSarvamKey, defaultGeminiKey);
               Navigator.pop(ctx);
             },
             child: const Text("Reset Defaults", style: TextStyle(color: Colors.redAccent)),
@@ -134,7 +143,7 @@ class _GeminiVoiceCloneScreenState extends State<GeminiVoiceCloneScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6366F1)),
             onPressed: () {
-              _saveKeys(gController.text, sController.text);
+              _saveKeys(sController.text, gController.text);
               Navigator.pop(ctx);
             },
             child: const Text("Save Keys"),
@@ -161,28 +170,23 @@ class _GeminiVoiceCloneScreenState extends State<GeminiVoiceCloneScreen> {
     }
   }
 
-  // 1. Gemini 2.0 Flash: Analyzes Scene Context, Attitude & Character Emotions
+  // Gemini 2.0 Flash: Scene & Emotion Analysis
   Future<List<Map<String, dynamic>>> analyzeSceneWithGemini() async {
     try {
       final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$geminiApiKey");
 
       final prompt = """
-You are an expert anime director. Analyze a video dubbing scene into Hindi:
-Generate a scene breakdown with:
-1. Speaker character identity
-2. Detected emotion and acting delivery (Cold, Aggressive, Tsundere, Strict, Whisper)
-3. Punchy anime Hinglish translation preserving character personality.
-
-Return a valid JSON array:
+Analyze an anime video dubbing scene into Hindi:
+Generate a scene breakdown in valid JSON format:
 [
   {
     "speaker": "Speaker 1",
-    "emotion": "Cold & Monotone",
+    "emotion": "Cold & Intense",
     "dialogue": "Maine tumhe kabhi apna ally nahi samjha. Mere liye har koi bas ek tool hai."
   },
   {
     "speaker": "Speaker 2",
-    "emotion": "Strict & Suspicious",
+    "emotion": "Strict & Authoritative",
     "dialogue": "Kya tum apni real abilities pure class se intentionally chupa rahe ho?"
   }
 ]
@@ -217,12 +221,12 @@ Return ONLY raw JSON array.
 
     return [
       {
-        "speaker": "Character 1",
+        "speaker": "Speaker 1",
         "emotion": "Original Vocal Tone",
         "dialogue": "Maine tumhe kabhi apna ally nahi samjha. Mere liye har koi bas ek tool hai."
       },
       {
-        "speaker": "Character 2",
+        "speaker": "Speaker 2",
         "emotion": "Original Vocal Tone",
         "dialogue": "Kya tum apni real abilities pure class se intentionally chupa rahe ho?"
       }
@@ -252,8 +256,8 @@ Return ONLY raw JSON array.
     return null;
   }
 
-  // Full Dubbing & In-Video Voice Cloning Execution
-  Future<void> startVoiceCloneDubbing() async {
+  // Dubbing Execution
+  Future<void> startDubbingPipeline() async {
     if (selectedVideo == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Pehle video select karo!")),
@@ -264,19 +268,25 @@ Return ONLY raw JSON array.
     setState(() {
       isProcessing = true;
       dubbingProgress = 0.05;
-      currentStatus = "1/4: Gemini AI analyzing scene emotions & dialogues...";
+      currentStatus = selectedEngine == "gemini"
+          ? "1/4: Gemini AI analyzing scene emotions & dialogues..."
+          : "1/4: Initializing Sarvam AI Dubbing Engine...";
       outputVideoUrl = null;
       sceneAnalysis.clear();
     });
 
     try {
-      // Step A: Gemini Scene Analysis
-      final script = await analyzeSceneWithGemini();
+      List<Map<String, dynamic>> script = [];
 
-      // Step B: Initialize Sarvam In-Video Voice Cloning & Dubbing Engine
+      // If Gemini is chosen, run Gemini Analysis
+      if (selectedEngine == "gemini") {
+        script = await analyzeSceneWithGemini();
+      }
+
+      // Step 2: Create Sarvam In-Video Voice Cloning & Dubbing Job
       setState(() {
         dubbingProgress = 0.25;
-        currentStatus = "2/4: Uploading video to Voice Clone Engine...";
+        currentStatus = "2/4: Uploading video to Sarvam Cloud...";
       });
 
       final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
@@ -290,8 +300,8 @@ Return ONLY raw JSON array.
           "src_lang": sourceLanguage,
           "target_langs": [targetLanguage],
           "export_options": ["video"],
-          "voice_cloning": true, // <-- CRUCIAL: In-Video Voice Cloning Enabled!
-          "num_speakers": -1,    // Auto-detect & clone every speaker's distinct voice!
+          "voice_cloning": true, // In-Video Voice Cloning: clones original speaker voices!
+          "num_speakers": -1,    // Auto-detect & clone every speaker
           "job_name": selectedVideo!.name,
         }),
       );
@@ -309,9 +319,9 @@ Return ONLY raw JSON array.
         throw Exception("Upload initialization failed.");
       }
 
-      // Step C: Upload raw video to cloud storage
+      // Step 3: Upload raw video to cloud storage
       final videoBytes = await selectedVideo!.readAsBytes();
-      await http.put(
+      final uploadRes = await http.put(
         Uri.parse(uploadUrl),
         headers: {
           "Content-Type": "application/octet-stream",
@@ -320,10 +330,14 @@ Return ONLY raw JSON array.
         body: videoBytes,
       );
 
-      // Step D: Start Pipeline
+      if (uploadRes.statusCode != 200 && uploadRes.statusCode != 201) {
+        throw Exception("Video upload failed to cloud server.");
+      }
+
+      // Step 4: Start Pipeline
       setState(() {
         dubbingProgress = 0.50;
-        currentStatus = "3/4: In-Video Voice Cloning & Hindi Dubbing in progress...";
+        currentStatus = "3/4: Voice Cloning & Hindi Dubbing in progress...";
       });
 
       await http.post(
@@ -331,7 +345,7 @@ Return ONLY raw JSON array.
         headers: {"api-subscription-key": sarvamApiKey},
       );
 
-      // Step E: Poll until dubbed video is ready
+      // Step 5: Poll until dubbed video is ready
       bool completed = false;
       int retries = 0;
       String? downloadedVideoUrl;
@@ -358,12 +372,11 @@ Return ONLY raw JSON array.
           if (status == "completed" || status == "partial_failure") {
             completed = true;
           } else if (status == "failed") {
-            throw Exception("Server Video Dubbing Failed");
+            throw Exception("Server Video Dubbing Failed: ${liveData["error_message"]}");
           }
         }
       }
 
-      // Fallback check on export-status
       if (downloadedVideoUrl == null) {
         final exportRes = await http.get(
           Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/export-status"),
@@ -379,7 +392,7 @@ Return ONLY raw JSON array.
         sceneAnalysis = script;
         isProcessing = false;
         dubbingProgress = 1.0;
-        currentStatus = "Dubbing & Voice Cloning Complete! Video Ready 🎉";
+        currentStatus = "Dubbing Complete! Video Ready to Download 🎉";
       });
     } catch (e) {
       setState(() {
@@ -393,7 +406,7 @@ Return ONLY raw JSON array.
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("AI Voice Clone & Dubbing", style: TextStyle(fontWeight: FontWeight.bold)),
+        title: const Text("AI Video Dubbing Studio", style: TextStyle(fontWeight: FontWeight.bold)),
         backgroundColor: const Color(0xFF1E293B),
         actions: [
           IconButton(
@@ -407,6 +420,84 @@ Return ONLY raw JSON array.
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ENGINE SWITCHER (Sarvam AI vs Gemini Studio)
+            Container(
+              padding: const EdgeInsets.all(4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => setState(() => selectedEngine = "sarvam"),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: selectedEngine == "sarvam" ? Colors.green : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.video_library, size: 18),
+                            SizedBox(width: 8),
+                            Text("Sarvam AI (Fast)", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: InkWell(
+                      onTap: () => setState(() => selectedEngine = "gemini"),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        decoration: BoxDecoration(
+                          color: selectedEngine == "gemini" ? const Color(0xFF6366F1) : Colors.transparent,
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.auto_awesome, size: 18),
+                            SizedBox(width: 8),
+                            Text("Gemini Studio", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // Engine Banner
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: (selectedEngine == "sarvam" ? Colors.green : const Color(0xFF6366F1)).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: selectedEngine == "sarvam" ? Colors.greenAccent : const Color(0xFF6366F1)),
+              ),
+              child: Text(
+                selectedEngine == "sarvam"
+                    ? "Sarvam AI Active: Direct in-video voice cloning & fast Hindi dubbing."
+                    : "Gemini Studio Active: AI scene emotion detection + In-video voice cloning.",
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: selectedEngine == "sarvam" ? Colors.greenAccent : Colors.indigoAccent,
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 16),
+
             // Video Selector Card
             InkWell(
               onTap: pickVideo,
@@ -484,15 +575,17 @@ Return ONLY raw JSON array.
               height: 52,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF6366F1),
+                  backgroundColor: selectedEngine == "sarvam" ? Colors.green : const Color(0xFF6366F1),
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
                 icon: const Icon(Icons.auto_awesome, color: Colors.white),
                 label: Text(
-                  isProcessing ? "Processing Dubbing & Cloning..." : "START IN-VIDEO CLONE & DUB",
+                  isProcessing
+                      ? "Processing Dubbing & Cloning..."
+                      : (selectedEngine == "sarvam" ? "START SARVAM DUBBING" : "START GEMINI CLONE & DUB"),
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
                 ),
-                onPressed: isProcessing ? null : startVoiceCloneDubbing,
+                onPressed: isProcessing ? null : startDubbingPipeline,
               ),
             ),
 
@@ -507,7 +600,10 @@ Return ONLY raw JSON array.
                 child: Column(
                   children: [
                     if (isProcessing) ...[
-                      LinearProgressIndicator(value: dubbingProgress, color: Colors.greenAccent),
+                      LinearProgressIndicator(
+                        value: dubbingProgress,
+                        color: selectedEngine == "sarvam" ? Colors.greenAccent : const Color(0xFF6366F1),
+                      ),
                       const SizedBox(height: 10),
                     ],
                     Text(
@@ -577,8 +673,8 @@ Return ONLY raw JSON array.
               ),
             ],
 
-            // 2. Gemini Dialogue & Emotion Breakdown
-            if (sceneAnalysis.isNotEmpty) ...[
+            // 2. Gemini Dialogue & Emotion Breakdown (Only in Gemini Mode)
+            if (selectedEngine == "gemini" && sceneAnalysis.isNotEmpty) ...[
               const SizedBox(height: 22),
               const Text("Gemini AI Scene Analysis & Script:", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.greenAccent, fontSize: 15)),
               const SizedBox(height: 10),
