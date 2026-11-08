@@ -41,7 +41,6 @@ class MultiEngineStudioScreen extends StatefulWidget {
 }
 
 class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
-  // Encoded default keys for GitHub safety
   static final String defaultElevenLabsKey = utf8.decode(base64Decode("c2tfOTNmMTQ1YmViYjQ2ZGM0Zjg2ZTE5NzI5MzNkMzlhOWMyODQ1NTM4ZTI3ZGM3N2Y1"));
   static final String defaultSarvamKey = utf8.decode(base64Decode("c2tfN3BuNHEzY2xfeTNtNFZwZG9remtDWU5oazJ5OUR0U2ZI"));
 
@@ -57,7 +56,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
   String sourceLanguage = "en";
   String targetLanguage = "hi";
 
-  bool isElevenCustomVoice = true;
+  bool isElevenCustomVoice = false;
 
   Map<int, PlatformFile?> speakerAudios = {
     1: null,
@@ -80,7 +79,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
     "hi": "Hindi (हिन्दी)",
     "bn": "Bengali (বাংলা)",
     "te": "Telugu (తెలుగు)",
-    "ta-IN": "Tamil",
+    "ta": "Tamil",
     "mr": "Marathi",
     "gu": "Gujarati",
     "kn": "Kannada",
@@ -205,57 +204,6 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
     }
   }
 
-  // 1. ELEVENLABS: Clone Voice
-  Future<String?> cloneVoiceWithElevenLabs(PlatformFile audioFile, String speakerName) async {
-    try {
-      var request = http.MultipartRequest(
-        'POST',
-        Uri.parse("https://api.elevenlabs.io/v1/voices/add"),
-      );
-      request.headers['xi-api-key'] = elevenLabsKey;
-      request.fields['name'] = "$speakerName-${DateTime.now().millisecondsSinceEpoch}";
-      request.files.add(await http.MultipartFile.fromPath('files', audioFile.path!));
-
-      var streamedResponse = await request.send();
-      var response = await http.Response.fromStream(streamedResponse);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final data = jsonDecode(response.body);
-        return data["voice_id"]?.toString();
-      } else {
-        throw Exception("ElevenLabs Voice Clone Failed (${response.statusCode}): ${response.body}");
-      }
-    } catch (e) {
-      rethrow;
-    }
-  }
-
-  // 2. ELEVENLABS: Synthesize Dialogue Speech in Cloned Voice
-  Future<Uint8List?> synthesizeElevenLabsSpeech(String text, String voiceId) async {
-    final url = Uri.parse("https://api.elevenlabs.io/v1/text-to-speech/$voiceId");
-    final res = await http.post(
-      url,
-      headers: {
-        "xi-api-key": elevenLabsKey,
-        "Content-Type": "application/json",
-      },
-      body: jsonEncode({
-        "text": text,
-        "model_id": "eleven_multilingual_v2",
-        "voice_settings": {
-          "stability": 0.5,
-          "similarity_boost": 0.85,
-        }
-      }),
-    );
-
-    if (res.statusCode == 200) {
-      return res.bodyBytes;
-    } else {
-      throw Exception("ElevenLabs TTS Failed (${res.statusCode}): ${res.body}");
-    }
-  }
-
   // Download Audio/Video File to Phone Storage
   Future<void> downloadFile(Uint8List? bytes, String filename, String extension) async {
     if (bytes == null || bytes.isEmpty) {
@@ -302,61 +250,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
     }
   }
 
-  // Play Character Audio
-  Future<void> playAudio(Uint8List? audioBytes, int index) async {
-    if (audioBytes == null || audioBytes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Is speaker ka audio available nahi hai!")),
-      );
-      return;
-    }
-
-    try {
-      if (currentlyPlayingIndex == index) {
-        await _audioPlayer.stop();
-        setState(() => currentlyPlayingIndex = null);
-        return;
-      }
-
-      setState(() => currentlyPlayingIndex = index);
-      await _audioPlayer.stop();
-      await _audioPlayer.play(BytesSource(audioBytes));
-
-      _audioPlayer.onPlayerComplete.listen((_) {
-        if (mounted) setState(() => currentlyPlayingIndex = null);
-      });
-    } catch (e) {
-      setState(() => currentlyPlayingIndex = null);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text("Player Error: $e")),
-      );
-    }
-  }
-
-  // Universal Video URL Finder
-  String? findVideoUrl(dynamic json) {
-    if (json == null) return null;
-    if (json is Map) {
-      if (json["dubbed_video_url"] != null && json["dubbed_video_url"].toString().startsWith("http")) {
-        return json["dubbed_video_url"].toString();
-      }
-      if (json["download_url"] != null && json["download_url"].toString().startsWith("http")) {
-        return json["download_url"].toString();
-      }
-      for (var val in json.values) {
-        final res = findVideoUrl(val);
-        if (res != null) return res;
-      }
-    } else if (json is List) {
-      for (var item in json) {
-        final res = findVideoUrl(item);
-        if (res != null) return res;
-      }
-    }
-    return null;
-  }
-
-  // Full Dubbing Execution with Strict Error Checking
+  // Full Dubbing Execution
   Future<void> runDubbingStudio() async {
     if (selectedVideo == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -368,7 +262,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
     setState(() {
       isProcessing = true;
       dubbingProgress = 0.05;
-      currentStatus = "1/4: Connecting to ${selectedEngine == "elevenlabs" ? "ElevenLabs" : "Sarvam AI"}...";
+      currentStatus = "1/4: Connecting to ${selectedEngine == "elevenlabs" ? "ElevenLabs Dubbing v2" : "Sarvam AI"}...";
       outputVideoUrl = null;
       dubbedVideoBytes = null;
       dubbedScript.clear();
@@ -376,47 +270,12 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
 
     try {
       if (selectedEngine == "elevenlabs") {
-        List<Map<String, dynamic>> processedScript = [];
-
-        // 1. ElevenLabs Voice Cloning
-        if (isElevenCustomVoice) {
-          setState(() {
-            dubbingProgress = 0.20;
-            currentStatus = "2/4: Cloning uploaded voices on ElevenLabs...";
-          });
-
-          List<String> characterLines = [
-            "नमस्ते, मैं आज के इस महत्वपूर्ण विषय पर बात करने जा रहा हूँ।",
-            "क्या आपको लगता है कि यह योजना पूरी तरह से सफल हो पाएगी?",
-            "मुझे अपनी क्षमताओं पर पूरा विश्वास है, हम यह लक्ष्य प्राप्त करेंगे।",
-            "कृपया इस प्रक्रिया को ध्यान से समझें और आगे बढ़ें।",
-            "सभी प्रतिभागियों को समय पर उपस्थित होना अनिवार्य है।"
-          ];
-
-          for (int i = 1; i <= 5; i++) {
-            PlatformFile? audio = speakerAudios[i];
-            if (audio != null && audio.path != null) {
-              setState(() => currentStatus = "ElevenLabs: Cloning Speaker $i voice...");
-              String? vId = await cloneVoiceWithElevenLabs(audio, "Speaker_$i");
-              if (vId != null) {
-                Uint8List? speechBytes = await synthesizeElevenLabsSpeech(characterLines[i - 1], vId);
-                if (speechBytes != null) {
-                  processedScript.add({
-                    "speaker": "Speaker $i",
-                    "file": audio.name,
-                    "dialogue": characterLines[i - 1],
-                    "audio": speechBytes,
-                  });
-                }
-              }
-            }
-          }
-        }
-
-        // 2. ElevenLabs Official Video Dubbing Endpoint
+        // ==========================================
+        // 🟣 ELEVENLABS DUBBING V2 (WITH WATERMARK FOR FREE TIER)
+        // ==========================================
         setState(() {
-          dubbingProgress = 0.50;
-          currentStatus = "3/4: Creating ElevenLabs Video Dubbing Project...";
+          dubbingProgress = 0.20;
+          currentStatus = "2/4: Uploading video to ElevenLabs Dubbing Studio...";
         });
 
         var dubRequest = http.MultipartRequest(
@@ -428,14 +287,15 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
         dubRequest.fields['name'] = "Dubbing_Studio_${DateTime.now().millisecondsSinceEpoch}";
         dubRequest.fields['target_lang'] = targetLanguage;
         dubRequest.fields['source_lang'] = sourceLanguage;
+        dubRequest.fields['watermark'] = "true"; // <-- FIX: Free Tier Watermark Enabled!
+        dubRequest.fields['num_speakers'] = "0"; // Auto-detect multiple speakers
         dubRequest.files.add(await http.MultipartFile.fromPath('file', selectedVideo!.path));
 
         var dubStreamedRes = await dubRequest.send();
         var dubRes = await http.Response.fromStream(dubStreamedRes);
 
-        // CHECK REAL STATUS CODE!
         if (dubRes.statusCode != 200 && dubRes.statusCode != 201) {
-          throw Exception("ElevenLabs Dubbing API Error (${dubRes.statusCode}): ${dubRes.body}");
+          throw Exception("ElevenLabs Error (${dubRes.statusCode}): ${dubRes.body}");
         }
 
         final dubData = jsonDecode(dubRes.body);
@@ -458,7 +318,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
           if (statusRes.statusCode == 200) {
             final sData = jsonDecode(statusRes.body);
             String s = sData["status"]?.toString() ?? "";
-            setState(() => currentStatus = "ElevenLabs Status: $s (in progress...)");
+            setState(() => currentStatus = "ElevenLabs Dubbing: $s (processing...)");
 
             if (s == "dubbed") {
               isReady = true;
@@ -484,10 +344,9 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
         }
 
         setState(() {
-          dubbedScript = processedScript;
           isProcessing = false;
           dubbingProgress = 1.0;
-          currentStatus = "ElevenLabs Dubbing & Voices Complete! 🎉";
+          currentStatus = "ElevenLabs Dubbing Complete! Video Ready to Download 🎉";
         });
       } else {
         // Sarvam AI Pipeline
@@ -607,7 +466,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ENGINE SWITCHER (ElevenLabs vs Sarvam)
+            // ENGINE SWITCHER
             Container(
               padding: const EdgeInsets.all(4),
               decoration: BoxDecoration(
@@ -673,7 +532,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
               ),
               child: Text(
                 selectedEngine == "elevenlabs"
-                    ? "ElevenLabs Active: Project will directly appear on your ElevenLabs dashboard!"
+                    ? "ElevenLabs Dubbing v2: Free Watermarked Dubbing Active (No paid subscription required)."
                     : "Sarvam AI Active: In-Video Voice Dubbing (Zero custom voice upload needed).",
                 style: TextStyle(
                   fontSize: 12,
@@ -754,71 +613,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
               ],
             ),
 
-            const SizedBox(height: 16),
-
-            // ELEVENLABS SPECIFIC: Custom Voice Toggle
-            if (selectedEngine == "elevenlabs") ...[
-              Container(
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1E293B),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: SwitchListTile(
-                  title: const Text("Custom Voice Clone Mode", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                  subtitle: Text(
-                    isElevenCustomVoice
-                        ? "ON: 5 Speaker voice uploads enabled (Instant ElevenLabs Cloning)"
-                        : "OFF: Default ElevenLabs dubbing without custom voice uploads",
-                    style: const TextStyle(fontSize: 11, color: Colors.grey),
-                  ),
-                  value: isElevenCustomVoice,
-                  activeColor: Colors.pinkAccent,
-                  onChanged: (val) => setState(() => isElevenCustomVoice = val),
-                ),
-              ),
-
-              // 5 Speaker Upload Rows
-              if (isElevenCustomVoice) ...[
-                const SizedBox(height: 14),
-                const Text("Upload Voices for Speakers (1 to 5):", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent)),
-                const SizedBox(height: 10),
-                for (int i = 1; i <= 5; i++)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 8.0),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF1E293B),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.mic, color: Colors.pinkAccent, size: 20),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Text(
-                              speakerAudios[i] != null
-                                  ? "Speaker $i: ${speakerAudios[i]!.name}"
-                                  : "Speaker $i Voice Clip",
-                              style: TextStyle(
-                                fontSize: 13,
-                                color: speakerAudios[i] != null ? Colors.greenAccent : Colors.white70,
-                              ),
-                            ),
-                          ),
-                          ElevatedButton(
-                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF334155)),
-                            onPressed: () => pickSpeakerAudio(i),
-                            child: Text(speakerAudios[i] != null ? "Change" : "Upload", style: const TextStyle(fontSize: 11)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-              ],
-            ],
-
-            const SizedBox(height: 18),
+            const SizedBox(height: 20),
 
             // Start Dubbing Button
             SizedBox(
@@ -832,7 +627,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
                 icon: const Icon(Icons.auto_awesome, color: Colors.white),
                 label: Text(
                   isProcessing
-                      ? "Processing Dubbing..."
+                      ? "Dubbing in Progress..."
                       : (selectedEngine == "elevenlabs" ? "START ELEVENLABS DUBBING" : "START SARVAM DUBBING"),
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
                 ),
@@ -870,7 +665,7 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
                 ),
               ),
 
-            // 1. Dubbed Video Card
+            // Dubbed Video Card
             if (dubbedVideoBytes != null || outputVideoUrl != null) ...[
               const SizedBox(height: 20),
               Container(
@@ -905,81 +700,6 @@ class _MultiEngineStudioScreenState extends State<MultiEngineStudioScreen> {
                   ],
                 ),
               ),
-            ],
-
-            // 2. ElevenLabs Cloned Custom Voices
-            if (selectedEngine == "elevenlabs" && dubbedScript.isNotEmpty) ...[
-              const SizedBox(height: 22),
-              const Text("ElevenLabs Cloned Voices (Play & Download):", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent, fontSize: 16)),
-              const SizedBox(height: 12),
-              for (int i = 0; i < dubbedScript.length; i++)
-                Container(
-                  margin: const EdgeInsets.only(bottom: 14),
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF1E293B),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: Colors.pinkAccent.withOpacity(0.35)),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        "${dubbedScript[i]["speaker"]} (${dubbedScript[i]["file"]})",
-                        style: const TextStyle(color: Colors.greenAccent, fontWeight: FontWeight.bold, fontSize: 15),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        "\"${dubbedScript[i]["dialogue"]}\"",
-                        style: const TextStyle(fontSize: 14, color: Colors.white, fontWeight: FontWeight.w500),
-                      ),
-                      const SizedBox(height: 14),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: currentlyPlayingIndex == i ? Colors.pinkAccent : const Color(0xFF334155),
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              icon: Icon(
-                                currentlyPlayingIndex == i ? Icons.pause : Icons.play_arrow,
-                                color: Colors.white,
-                                size: 20,
-                              ),
-                              label: Text(
-                                currentlyPlayingIndex == i ? "Pause" : "Play Voice",
-                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                              onPressed: () => playAudio(dubbedScript[i]["audio"], i),
-                            ),
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: ElevatedButton.icon(
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: const Color(0xFF6366F1),
-                                padding: const EdgeInsets.symmetric(vertical: 10),
-                                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                              ),
-                              icon: const Icon(Icons.download, color: Colors.white, size: 20),
-                              label: const Text(
-                                "Download MP3",
-                                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                              onPressed: () => downloadFile(
-                                dubbedScript[i]["audio"],
-                                "${dubbedScript[i]["speaker"]}_ElevenLabs",
-                                "mp3",
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
             ],
           ],
         ),
