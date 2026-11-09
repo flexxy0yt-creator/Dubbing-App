@@ -39,13 +39,13 @@ class CustomDubbingScreen extends StatefulWidget {
 }
 
 class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
-  String serverUrl = "https://your-tunnel-link.loca.lt";
+  String serverUrl = "https://your-link.trycloudflare.com";
 
   final ImagePicker _picker = ImagePicker();
   XFile? selectedVideo;
   String targetLanguage = "hi";
 
-  // 5 Speaker Reference Audio Slots
+  // 5 Speaker Audio Slots
   Map<int, PlatformFile?> speakerAudios = {
     1: null,
     2: null,
@@ -111,7 +111,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              "Colab me jo naya URL aaya hai, use yahan paste karein:",
+              "Colab me jo naya 'trycloudflare.com' link aaya hai, use yahan paste karein:",
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 10),
@@ -122,7 +122,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
                 filled: true,
                 fillColor: const Color(0xFF0F172A),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                hintText: "https://...loca.lt",
+                hintText: "https://...trycloudflare.com",
               ),
             ),
           ],
@@ -190,7 +190,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
     setState(() {
       isProcessing = true;
       dubbingProgress = 0.15;
-      currentStatus = "1/4: Connecting to your GPU Server...";
+      currentStatus = "1/4: Connecting to Server...";
       outputVideoUrl = null;
       dubbedDialogue = null;
     });
@@ -201,12 +201,12 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
 
       setState(() {
         dubbingProgress = 0.35;
-        currentStatus = "2/4: Uploading video & 5 speaker voice tracks...";
+        currentStatus = "2/4: Uploading video & voices to server...";
       });
 
       request.files.add(await http.MultipartFile.fromPath('video', selectedVideo!.path));
 
-      // Attach all 5 speaker audios
+      // Attach 5 speaker audios
       for (int i = 1; i <= 5; i++) {
         if (speakerAudios[i] != null && speakerAudios[i]!.path != null) {
           request.files.add(
@@ -216,8 +216,8 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
       }
 
       setState(() {
-        dubbingProgress = 0.60;
-        currentStatus = "3/4: GPU Server: Whisper transcribing & XTTS-v2 cloning...";
+        dubbingProgress = 0.65;
+        currentStatus = "3/4: Transcribing speech & creating dubbed audio...";
       });
 
       var streamedRes = await request.send();
@@ -405,7 +405,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Icon(Icons.rocket_launch_rounded, color: Colors.white),
                 label: Text(
-                  isProcessing ? "GPU PROCESSING..." : "START FREE DUBBING",
+                  isProcessing ? "DUBBING IN PROGRESS..." : "START FREE DUBBING",
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
                 ),
                 onPressed: isProcessing ? null : startDubbing,
