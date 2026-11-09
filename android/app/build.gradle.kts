@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "com.flexxy.dubbing.dubbing_app"
+    namespace = "com.flexxy.dubbing"
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
 
@@ -16,7 +16,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "control.panel.bro.es.ko.hi.change.karte hai"
+        applicationId = "com.flexxy.dubbing"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
