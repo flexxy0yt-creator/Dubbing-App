@@ -7,7 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized(); // Startup crash rokne ke liye
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const FreeDubbingApp());
 }
 
@@ -17,7 +17,7 @@ class FreeDubbingApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Free GPU AI Dubbing Studio',
+      title: 'Free AI Dubbing Studio',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF090D16),
@@ -39,12 +39,20 @@ class CustomDubbingScreen extends StatefulWidget {
 }
 
 class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
-  String colabServerUrl = "https://your-colab-link.trycloudflare.com";
+  String serverUrl = "https://your-tunnel-link.loca.lt";
 
   final ImagePicker _picker = ImagePicker();
   XFile? selectedVideo;
-  PlatformFile? refAudioFile;
   String targetLanguage = "hi";
+
+  // 5 Speaker Reference Audio Slots
+  Map<int, PlatformFile?> speakerAudios = {
+    1: null,
+    2: null,
+    3: null,
+    4: null,
+    5: null,
+  };
 
   bool isProcessing = false;
   String currentStatus = "";
@@ -71,21 +79,21 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
   Future<void> _loadServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      colabServerUrl = prefs.getString("colab_url") ?? colabServerUrl;
+      serverUrl = prefs.getString("server_url") ?? serverUrl;
     });
   }
 
   Future<void> _saveServerUrl(String url) async {
     final cleanUrl = url.trim().replaceAll(RegExp(r'/+$'), '');
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString("colab_url", cleanUrl);
+    await prefs.setString("server_url", cleanUrl);
     setState(() {
-      colabServerUrl = cleanUrl;
+      serverUrl = cleanUrl;
     });
   }
 
   void _showServerSettings() {
-    final controller = TextEditingController(text: colabServerUrl);
+    final controller = TextEditingController(text: serverUrl);
 
     showDialog(
       context: context,
@@ -103,7 +111,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              "Colab notebook me jo 'trycloudflare.com' link aayi hai, use yahan paste karein:",
+              "Colab me jo naya URL aaya hai, use yahan paste karein:",
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
             const SizedBox(height: 10),
@@ -114,7 +122,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
                 filled: true,
                 fillColor: const Color(0xFF0F172A),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                hintText: "https://...trycloudflare.com",
+                hintText: "https://...loca.lt",
               ),
             ),
           ],
@@ -149,13 +157,18 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
     }
   }
 
-  Future<void> pickRefAudio() async {
+  Future<void> pickSpeakerAudio(int speakerNumber) async {
     try {
       FilePickerResult? res = await FilePicker.platform.pickFiles(type: FileType.any);
       if (res != null && res.files.isNotEmpty) {
         setState(() {
-          refAudioFile = res.files.first;
+          speakerAudios[speakerNumber] = res.files.first;
         });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text("Speaker $speakerNumber Audio Uploaded!")),
+          );
+        }
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Audio Error: $e")));
@@ -168,8 +181,8 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
       return;
     }
 
-    if (!colabServerUrl.startsWith("http")) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pehle Colab Server URL daalo!")));
+    if (!serverUrl.startsWith("http")) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pehle Server URL daalo!")));
       _showServerSettings();
       return;
     }
@@ -177,29 +190,34 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
     setState(() {
       isProcessing = true;
       dubbingProgress = 0.15;
-      currentStatus = "1/4: Connecting to your Google Colab T4 GPU Server...";
+      currentStatus = "1/4: Connecting to your GPU Server...";
       outputVideoUrl = null;
       dubbedDialogue = null;
     });
 
     try {
-      var request = http.MultipartRequest('POST', Uri.parse("$colabServerUrl/dub"));
+      var request = http.MultipartRequest('POST', Uri.parse("$serverUrl/dub"));
       request.fields['target_lang'] = targetLanguage;
 
       setState(() {
         dubbingProgress = 0.35;
-        currentStatus = "2/4: Uploading video & reference vocal to Colab...";
+        currentStatus = "2/4: Uploading video & 5 speaker voice tracks...";
       });
 
       request.files.add(await http.MultipartFile.fromPath('video', selectedVideo!.path));
 
-      if (refAudioFile != null && refAudioFile!.path != null) {
-        request.files.add(await http.MultipartFile.fromPath('ref_audio', refAudioFile!.path!));
+      // Attach all 5 speaker audios
+      for (int i = 1; i <= 5; i++) {
+        if (speakerAudios[i] != null && speakerAudios[i]!.path != null) {
+          request.files.add(
+            await http.MultipartFile.fromPath('ref_audio_$i', speakerAudios[i]!.path!),
+          );
+        }
       }
 
       setState(() {
         dubbingProgress = 0.60;
-        currentStatus = "3/4: Colab GPU: Whisper transcribing & XTTS-v2 cloning voice...";
+        currentStatus = "3/4: GPU Server: Whisper transcribing & XTTS-v2 cloning...";
       });
 
       var streamedRes = await request.send();
@@ -210,11 +228,11 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
         final String downloadPath = data["download_url"];
 
         setState(() {
-          outputVideoUrl = "$colabServerUrl$downloadPath";
+          outputVideoUrl = "$serverUrl$downloadPath";
           dubbedDialogue = data["dialogue"];
           isProcessing = false;
           dubbingProgress = 1.0;
-          currentStatus = "Dubbing Complete! 100% Free Video Ready 🎉";
+          currentStatus = "Dubbing Complete! Video Ready to Download 🎉";
         });
       } else {
         throw Exception("Server Error (${res.statusCode}): ${res.body}");
@@ -252,7 +270,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Server URL Status Card
+            // Server URL Card
             InkWell(
               onTap: _showServerSettings,
               child: Container(
@@ -269,7 +287,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        "GPU Server: $colabServerUrl",
+                        "GPU Server: $serverUrl",
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(fontSize: 12, color: Colors.white70),
                       ),
@@ -315,40 +333,46 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
               ),
             ),
 
-            const SizedBox(height: 14),
+            const SizedBox(height: 18),
 
-            // Reference Vocal Upload Card
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: const Color(0xFF151D2E),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFF334155)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.mic, color: Color(0xFFEC4899), size: 22),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text("Character Voice Sample (Optional)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        Text(
-                          refAudioFile != null ? refAudioFile!.name : "Select MP3 to clone or uses video voice",
-                          style: TextStyle(fontSize: 11, color: refAudioFile != null ? Colors.greenAccent : Colors.grey),
+            // 5 SPEAKER VOICE UPLOAD CARDS
+            const Text("Upload Voices for Speakers (1 to 5):", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.pinkAccent, fontSize: 14)),
+            const SizedBox(height: 10),
+
+            for (int i = 1; i <= 5; i++)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8.0),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF151D2E),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: const Color(0xFF334155)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.mic, color: Colors.pinkAccent, size: 20),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          speakerAudios[i] != null
+                              ? "Speaker $i: ${speakerAudios[i]!.name}"
+                              : "Speaker $i Voice Sample (Optional)",
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: speakerAudios[i] != null ? Colors.greenAccent : Colors.white60,
+                          ),
                         ),
-                      ],
-                    ),
+                      ),
+                      ElevatedButton(
+                        style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF334155)),
+                        onPressed: isProcessing ? null : () => pickSpeakerAudio(i),
+                        child: Text(speakerAudios[i] != null ? "Change" : "Upload", style: const TextStyle(fontSize: 11)),
+                      ),
+                    ],
                   ),
-                  ElevatedButton(
-                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF334155)),
-                    onPressed: isProcessing ? null : pickRefAudio,
-                    child: Text(refAudioFile != null ? "Change" : "Browse", style: const TextStyle(fontSize: 11)),
-                  ),
-                ],
+                ),
               ),
-            ),
 
             const SizedBox(height: 16),
 
@@ -381,7 +405,7 @@ class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Icon(Icons.rocket_launch_rounded, color: Colors.white),
                 label: Text(
-                  isProcessing ? "COLAB GPU PROCESSING..." : "START FREE DUBBING",
+                  isProcessing ? "GPU PROCESSING..." : "START FREE DUBBING",
                   style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
                 ),
                 onPressed: isProcessing ? null : startDubbing,
