@@ -1,119 +1,100 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 void main() {
-  runApp(const SarvamDubbingApp());
+  runApp(const FreeDubbingApp());
 }
 
-class SarvamDubbingApp extends StatelessWidget {
-  const SarvamDubbingApp({super.key});
+class FreeDubbingApp extends StatelessWidget {
+  const FreeDubbingApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Sarvam AI Dubbing Studio',
+      title: 'Free GPU AI Dubbing Studio',
       debugShowCheckedModeBanner: false,
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: const Color(0xFF090D16),
         colorScheme: const ColorScheme.dark(
           primary: Color(0xFF6366F1),
           secondary: Color(0xFF10B981),
-          surface: Color(0xFF151D2E),
         ),
       ),
-      home: const DubbingStudioScreen(),
+      home: const CustomDubbingScreen(),
     );
   }
 }
 
-class DubbingStudioScreen extends StatefulWidget {
-  const DubbingStudioScreen({super.key});
+class CustomDubbingScreen extends StatefulWidget {
+  const CustomDubbingScreen({super.key});
 
   @override
-  State<DubbingStudioScreen> createState() => _DubbingStudioScreenState();
+  State<CustomDubbingScreen> createState() => _CustomDubbingScreenState();
 }
 
-class _DubbingStudioScreenState extends State<DubbingStudioScreen> with SingleTickerProviderStateMixin {
-  // Safe Base64 Encoded Key
-  static final String defaultSarvamKey = utf8.decode(base64Decode("c2tfN3BuNHEzY2xfeTNtNFZwZG9rektDV1U1b2F6SjVPVVIwVTJaSQ=="));
-  String sarvamApiKey = defaultSarvamKey;
+class _CustomDubbingScreenState extends State<CustomDubbingScreen> {
+  String colabServerUrl = "https://your-colab-link.trycloudflare.com";
 
   final ImagePicker _picker = ImagePicker();
   XFile? selectedVideo;
-  String sourceLanguage = "en-IN";
-  String targetLanguage = "hi-IN";
+  PlatformFile? refAudioFile;
+  String targetLanguage = "hi";
 
   bool isProcessing = false;
   String currentStatus = "";
   double dubbingProgress = 0.0;
-  int currentStep = 0; // 0 to 4 for smooth stepper effect
   String? outputVideoUrl;
-
-  late AnimationController _pulseController;
+  String? dubbedDialogue;
 
   final Map<String, String> languages = {
-    "en-IN": "English (Indian)",
-    "hi-IN": "Hindi (हिन्दी)",
-    "bn-IN": "Bengali (বাংলা)",
-    "te-IN": "Telugu (తెలుగు)",
-    "ta-IN": "Tamil (தமிழ்)",
-    "mr-IN": "Marathi (मराठी)",
-    "gu-IN": "Gujarati (ગુજરાતી)",
-    "kn-IN": "Kannada (ಕನ್ನಡ)",
-    "ml-IN": "Malayalam (മലയാളം)",
-    "pa-IN": "Punjabi (ਪੰਜਾਬੀ)",
-    "or-IN": "Odia (ଓଡ଼ିଆ)",
+    "hi": "Hindi (हिन्दी)",
+    "en": "English",
+    "bn": "Bengali (বাংলা)",
+    "te": "Telugu (తెలుగు)",
+    "ta": "Tamil (தமிழ்)",
+    "mr": "Marathi (मराठी)",
+    "gu": "Gujarati (ગુજરાતી)",
   };
 
   @override
   void initState() {
     super.initState();
-    _loadApiKey();
-    _pulseController = AnimationController(
-      vsync: this,
-      duration: const Duration(seconds: 2),
-    )..repeat(reverse: true);
+    _loadServerUrl();
   }
 
-  @override
-  void dispose() {
-    _pulseController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _loadApiKey() async {
+  Future<void> _loadServerUrl() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      sarvamApiKey = prefs.getString("sarvam_key") ?? defaultSarvamKey;
+      colabServerUrl = prefs.getString("colab_url") ?? colabServerUrl;
     });
   }
 
-  Future<void> _saveApiKey(String newKey) async {
+  Future<void> _saveServerUrl(String url) async {
+    final cleanUrl = url.trim().replaceAll(RegExp(r'/+$'), '');
     final prefs = await SharedPreferences.getInstance();
-    await prefs.setString("sarvam_key", newKey.trim());
+    await prefs.setString("colab_url", cleanUrl);
     setState(() {
-      sarvamApiKey = newKey.trim();
+      colabServerUrl = cleanUrl;
     });
   }
 
-  void _showSettingsDialog() {
-    final controller = TextEditingController(text: sarvamApiKey);
+  void _showServerSettings() {
+    final controller = TextEditingController(text: colabServerUrl);
 
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E293B),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Row(
           children: [
-            Icon(Icons.vpn_key_rounded, color: Color(0xFF6366F1)),
-            SizedBox(width: 10),
-            Text("Sarvam API Key", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Icon(Icons.dns_rounded, color: Color(0xFF10B981)),
+            SizedBox(width: 8),
+            Text("Colab GPU Server URL", style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold)),
           ],
         ),
         content: Column(
@@ -121,10 +102,10 @@ class _DubbingStudioScreenState extends State<DubbingStudioScreen> with SingleTi
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
-              "Agar credits khatam ho gaye hain ya nayi key lagani ho toh yahan change karein:",
+              "Colab notebook me jo 'trycloudflare.com' link aayi hai, use yahan paste karein:",
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             TextField(
               controller: controller,
               style: const TextStyle(fontSize: 13),
@@ -132,33 +113,20 @@ class _DubbingStudioScreenState extends State<DubbingStudioScreen> with SingleTi
                 filled: true,
                 fillColor: const Color(0xFF0F172A),
                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                labelText: "API Key",
-                hintText: "sk_...",
+                hintText: "https://...trycloudflare.com",
               ),
             ),
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () {
-              controller.text = defaultSarvamKey;
-              _saveApiKey(defaultSarvamKey);
-              Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Default Key Restored!")));
-            },
-            child: const Text("Reset Default", style: TextStyle(color: Colors.redAccent)),
-          ),
           ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF6366F1),
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-            ),
+            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF6366F1)),
             onPressed: () {
-              _saveApiKey(controller.text);
+              _saveServerUrl(controller.text);
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Key Saved Successfully!")));
+              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Server URL Saved!")));
             },
-            child: const Text("Save Key", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text("Save URL"),
           ),
         ],
       ),
@@ -172,208 +140,90 @@ class _DubbingStudioScreenState extends State<DubbingStudioScreen> with SingleTi
         setState(() {
           selectedVideo = video;
           outputVideoUrl = null;
+          dubbedDialogue = null;
         });
       }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(backgroundColor: Colors.redAccent, content: Text("Gallery Error: $e")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Gallery Error: $e")));
     }
   }
 
-  String? findVideoUrl(dynamic json) {
-    if (json == null) return null;
-    if (json is Map) {
-      if (json["dubbed_video_url"] != null && json["dubbed_video_url"].toString().startsWith("http")) {
-        return json["dubbed_video_url"].toString();
+  Future<void> pickRefAudio() async {
+    try {
+      FilePickerResult? res = await FilePicker.platform.pickFiles(type: FileType.any);
+      if (res != null && res.files.isNotEmpty) {
+        setState(() {
+          refAudioFile = res.files.first;
+        });
       }
-      if (json["download_url"] != null && json["download_url"].toString().startsWith("http")) {
-        return json["download_url"].toString();
-      }
-      for (var val in json.values) {
-        final res = findVideoUrl(val);
-        if (res != null) return res;
-      }
-    } else if (json is List) {
-      for (var item in json) {
-        final res = findVideoUrl(item);
-        if (res != null) return res;
-      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Audio Error: $e")));
     }
-    return null;
   }
 
   Future<void> startDubbing() async {
     if (selectedVideo == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Pehle video select karo!")),
-      );
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pehle video select karo!")));
+      return;
+    }
+
+    if (!colabServerUrl.startsWith("http")) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Pehle Colab Server URL daalo!")));
+      _showServerSettings();
       return;
     }
 
     setState(() {
       isProcessing = true;
-      currentStep = 1;
       dubbingProgress = 0.15;
-      currentStatus = "Initializing AI Dubbing Job on Sarvam Cloud...";
+      currentStatus = "1/4: Connecting to your Google Colab T4 GPU Server...";
       outputVideoUrl = null;
+      dubbedDialogue = null;
     });
 
     try {
-      // 1. Create Dubbing Job
-      final createJobUrl = Uri.parse("https://api.sarvam.ai/dubbing/jobs");
-      final jobResponse = await http.post(
-        createJobUrl,
-        headers: {
-          "Content-Type": "application/json",
-          "api-subscription-key": sarvamApiKey,
-        },
-        body: jsonEncode({
-          "src_lang": sourceLanguage,
-          "target_langs": [targetLanguage],
-          "export_options": ["video"],
-          "voice_cloning": true,
-          "num_speakers": -1,
-          "job_name": selectedVideo!.name,
-        }),
-      );
+      var request = http.MultipartRequest('POST', Uri.parse("$colabServerUrl/dub"));
+      request.fields['target_lang'] = targetLanguage;
 
-      if (jobResponse.statusCode != 200 && jobResponse.statusCode != 201) {
-        throw Exception("Sarvam Error (${jobResponse.statusCode}): ${jobResponse.body}");
-      }
-
-      final jobData = jsonDecode(jobResponse.body);
-      final d = jobData["data"] ?? jobData;
-      final String? jobId = d["job_id"]?.toString() ?? d["id"]?.toString();
-      final String? uploadUrl = d["upload_url"]?.toString();
-
-      if (jobId == null || uploadUrl == null) {
-        throw Exception("Server did not return a valid upload URL.");
-      }
-
-      // 2. Upload Video to Azure Storage
       setState(() {
-        currentStep = 2;
         dubbingProgress = 0.35;
-        currentStatus = "Uploading raw video to cloud processor...";
+        currentStatus = "2/4: Uploading video & reference vocal to Colab...";
       });
 
-      final videoBytes = await selectedVideo!.readAsBytes();
-      final uploadRes = await http.put(
-        Uri.parse(uploadUrl),
-        headers: {
-          "Content-Type": "application/octet-stream",
-          "x-ms-blob-type": "BlockBlob",
-        },
-        body: videoBytes,
-      );
+      request.files.add(await http.MultipartFile.fromPath('video', selectedVideo!.path));
 
-      if (uploadRes.statusCode != 200 && uploadRes.statusCode != 201) {
-        throw Exception("Video upload failed to cloud server.");
-      }
-
-      // 3. Start Pipeline
-      setState(() {
-        currentStep = 3;
-        dubbingProgress = 0.55;
-        currentStatus = "AI Cloning voices, translating dialogues & syncing audio...";
-      });
-
-      await http.post(
-        Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/start"),
-        headers: {"api-subscription-key": sarvamApiKey},
-      );
-
-      // 4. Smooth Polling
-      bool completed = false;
-      int retries = 0;
-      String? downloadedVideoUrl;
-
-      while (!completed && retries < 90) {
-        await Future.delayed(const Duration(seconds: 5));
-        retries++;
-
-        final statusRes = await http.get(
-          Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/live-status"),
-          headers: {"api-subscription-key": sarvamApiKey},
-        );
-
-        if (statusRes.statusCode == 200) {
-          final sData = jsonDecode(statusRes.body);
-          final liveData = sData["data"] ?? sData;
-          String status = liveData["status"]?.toString() ?? "";
-          String? step = liveData["current_step_label"]?.toString();
-
-          if (step != null) {
-            setState(() {
-              currentStatus = step;
-              dubbingProgress = 0.55 + (retries / 90) * 0.35;
-            });
-          }
-
-          downloadedVideoUrl = findVideoUrl(liveData);
-
-          if (status == "completed" || status == "partial_failure") {
-            completed = true;
-          } else if (status == "failed") {
-            throw Exception("Server Dubbing Failed: ${liveData["error_message"]}");
-          }
-        }
-      }
-
-      // Check export status if live-status didn't have URL
-      if (downloadedVideoUrl == null) {
-        final exportRes = await http.get(
-          Uri.parse("https://api.sarvam.ai/dubbing/jobs/$jobId/export-status"),
-          headers: {"api-subscription-key": sarvamApiKey},
-        );
-        if (exportRes.statusCode == 200) {
-          downloadedVideoUrl = findVideoUrl(jsonDecode(exportRes.body));
-        }
+      if (refAudioFile != null && refAudioFile!.path != null) {
+        request.files.add(await http.MultipartFile.fromPath('ref_audio', refAudioFile!.path!));
       }
 
       setState(() {
-        currentStep = 4;
-        outputVideoUrl = downloadedVideoUrl;
-        isProcessing = false;
-        dubbingProgress = 1.0;
-        currentStatus = "Dubbing Complete! Video Ready to Download 🎉";
+        dubbingProgress = 0.60;
+        currentStatus = "3/4: Colab GPU: Whisper transcribing & XTTS-v2 cloning voice...";
       });
+
+      var streamedRes = await request.send();
+      var res = await http.Response.fromStream(streamedRes);
+
+      if (res.statusCode == 200) {
+        final data = jsonDecode(res.body);
+        final String downloadPath = data["download_url"];
+
+        setState(() {
+          outputVideoUrl = "$colabServerUrl$downloadPath";
+          dubbedDialogue = data["dialogue"];
+          isProcessing = false;
+          dubbingProgress = 1.0;
+          currentStatus = "Dubbing Complete! 100% Free Video Ready 🎉";
+        });
+      } else {
+        throw Exception("Server Error (${res.statusCode}): ${res.body}");
+      }
     } catch (e) {
       setState(() {
         isProcessing = false;
         currentStatus = "Error: $e";
       });
     }
-  }
-
-  Widget _buildStepItem(int stepNumber, String title, bool isActive, bool isDone) {
-    return Row(
-      children: [
-        Container(
-          width: 24,
-          height: 24,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: isDone ? const Color(0xFF10B981) : (isActive ? const Color(0xFF6366F1) : const Color(0xFF334155)),
-          ),
-          child: Center(
-            child: isDone
-                ? const Icon(Icons.check, size: 14, color: Colors.white)
-                : Text("$stepNumber", style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Text(
-          title,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: isActive || isDone ? FontWeight.bold : FontWeight.normal,
-            color: isDone ? const Color(0xFF10B981) : (isActive ? Colors.white : Colors.grey),
-          ),
-        ),
-      ],
-    );
   }
 
   @override
@@ -384,284 +234,227 @@ class _DubbingStudioScreenState extends State<DubbingStudioScreen> with SingleTi
         backgroundColor: const Color(0xFF0F172A),
         title: const Row(
           children: [
-            Icon(Icons.auto_awesome, color: Color(0xFF6366F1), size: 22),
-            SizedBox(width: 10),
-            Text("Sarvam Dubbing Studio", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
+            Icon(Icons.bolt_rounded, color: Color(0xFF10B981), size: 24),
+            SizedBox(width: 8),
+            Text("Free AI Dubbing Studio", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17)),
           ],
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.settings_outlined, color: Colors.white70),
-            onPressed: _showSettingsDialog,
+            icon: const Icon(Icons.dns_rounded, color: Colors.white70),
+            onPressed: _showServerSettings,
           ),
         ],
       ),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 20.0),
+        padding: const EdgeInsets.symmetric(horizontal: 18.0, vertical: 16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Server URL Status Card
+            InkWell(
+              onTap: _showServerSettings,
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF151D2E),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFF6366F1).withOpacity(0.5)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.cloud_done_rounded, color: Color(0xFF10B981), size: 18),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        "GPU Server: $colabServerUrl",
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, color: Colors.white70),
+                      ),
+                    ),
+                    const Icon(Icons.edit, size: 14, color: Colors.grey),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 18),
+
             // Video Selector Card
             InkWell(
               onTap: isProcessing ? null : pickVideo,
-              borderRadius: BorderRadius.circular(20),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 300),
+              borderRadius: BorderRadius.circular(18),
+              child: Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+                padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: selectedVideo != null
-                        ? [const Color(0xFF1E293B), const Color(0xFF131B2A)]
-                        : [const Color(0xFF1E293B), const Color(0xFF0F172A)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
+                  color: const Color(0xFF151D2E),
+                  borderRadius: BorderRadius.circular(18),
                   border: Border.all(
-                    color: selectedVideo != null ? const Color(0xFF10B981) : const Color(0xFF6366F1).withOpacity(0.4),
-                    width: selectedVideo != null ? 2 : 1.5,
+                    color: selectedVideo != null ? const Color(0xFF10B981) : const Color(0xFF334155),
+                    width: selectedVideo != null ? 2 : 1,
                   ),
                 ),
                 child: Column(
                   children: [
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: selectedVideo != null ? const Color(0xFF10B981).withOpacity(0.15) : const Color(0xFF6366F1).withOpacity(0.15),
-                        shape: BoxShape.circle,
-                      ),
-                      child: Icon(
-                        selectedVideo != null ? Icons.check_circle_rounded : Icons.video_file_rounded,
-                        size: 42,
-                        color: selectedVideo != null ? const Color(0xFF10B981) : const Color(0xFF6366F1),
-                      ),
+                    Icon(
+                      selectedVideo != null ? Icons.check_circle_rounded : Icons.video_file_rounded,
+                      size: 40,
+                      color: selectedVideo != null ? const Color(0xFF10B981) : const Color(0xFF6366F1),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 8),
                     Text(
-                      selectedVideo != null ? selectedVideo!.name : "Select Raw Video to Dub",
+                      selectedVideo != null ? selectedVideo!.name : "Select Video to Dub",
                       textAlign: TextAlign.center,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      selectedVideo != null ? "Tap to change video" : "Supports MP4, MOV, WEBM (Gallery)",
-                      style: const TextStyle(fontSize: 12, color: Colors.grey),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                     ),
                   ],
                 ),
               ),
             ),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 14),
 
-            // Language Selection Card
+            // Reference Vocal Upload Card
             Container(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
                 color: const Color(0xFF151D2E),
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFF334155).withOpacity(0.5)),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFF334155)),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+              child: Row(
                 children: [
-                  const Text("Language Configuration", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white70)),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text("Source (Original)", style: TextStyle(fontSize: 11, color: Colors.grey)),
-                            const SizedBox(height: 4),
-                            DropdownButtonFormField<String>(
-                              value: sourceLanguage,
-                              dropdownColor: const Color(0xFF1E293B),
-                              decoration: InputDecoration(
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                filled: true,
-                                fillColor: const Color(0xFF0F172A),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                              ),
-                              items: languages.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 12)))).toList(),
-                              onChanged: isProcessing ? null : (val) => setState(() => sourceLanguage = val!),
-                            ),
-                          ],
+                  const Icon(Icons.mic, color: Color(0xFFEC4899), size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text("Character Voice Sample (Optional)", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                        Text(
+                          refAudioFile != null ? refAudioFile!.name : "Select MP3 to clone or uses video voice",
+                          style: TextStyle(fontSize: 11, color: refAudioFile != null ? Colors.greenAccent : Colors.grey),
                         ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text("Target (Dubbed)", style: TextStyle(fontSize: 11, color: Colors.grey)),
-                            const SizedBox(height: 4),
-                            DropdownButtonFormField<String>(
-                              value: targetLanguage,
-                              dropdownColor: const Color(0xFF1E293B),
-                              decoration: InputDecoration(
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                                filled: true,
-                                fillColor: const Color(0xFF0F172A),
-                                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
-                              ),
-                              items: languages.entries.where((e) => e.key != "en-IN").map((e) => DropdownMenuItem(value: e.key, child: Text(e.value, style: const TextStyle(fontSize: 12)))).toList(),
-                              onChanged: isProcessing ? null : (val) => setState(() => targetLanguage = val!),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
+                      ],
+                    ),
+                  ),
+                  ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF334155)),
+                    onPressed: isProcessing ? null : pickRefAudio,
+                    child: Text(refAudioFile != null ? "Change" : "Browse", style: const TextStyle(fontSize: 11)),
                   ),
                 ],
               ),
             ),
 
-            const SizedBox(height: 24),
+            const SizedBox(height: 16),
 
-            // Dub Video Action Button
+            // Target Language Dropdown
+            DropdownButtonFormField<String>(
+              value: targetLanguage,
+              dropdownColor: const Color(0xFF1E293B),
+              decoration: InputDecoration(
+                labelText: "Target Dubbing Language",
+                filled: true,
+                fillColor: const Color(0xFF151D2E),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+              ),
+              items: languages.entries.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
+              onChanged: isProcessing ? null : (val) => setState(() => targetLanguage = val!),
+            ),
+
+            const SizedBox(height: 20),
+
+            // Action Button
             SizedBox(
               width: double.infinity,
-              height: 54,
+              height: 52,
               child: ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF6366F1),
-                  elevation: 4,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                 ),
                 icon: isProcessing
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                    : const Icon(Icons.bolt, color: Colors.white),
+                    : const Icon(Icons.rocket_launch_rounded, color: Colors.white),
                 label: Text(
-                  isProcessing ? "DUBBING IN PROGRESS..." : "START AI DUBBING",
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15, letterSpacing: 0.5, color: Colors.white),
+                  isProcessing ? "COLAB GPU PROCESSING..." : "START FREE DUBBING",
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white),
                 ),
                 onPressed: isProcessing ? null : startDubbing,
               ),
             ),
 
-            const SizedBox(height: 20),
+            const SizedBox(height: 18),
 
-            // Smooth Animated Progress & Step Tracker
+            // Status Box
             if (isProcessing || currentStatus.isNotEmpty)
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(18),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF151D2E),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF334155)),
-                ),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(color: const Color(0xFF151D2E), borderRadius: BorderRadius.circular(14)),
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text("Process Status", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.white70)),
-                        Text("${(dubbingProgress * 100).toInt()}%", style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFF10B981))),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: LinearProgressIndicator(
-                        value: dubbingProgress,
-                        minHeight: 6,
-                        backgroundColor: const Color(0xFF0F172A),
-                        color: currentStatus.startsWith("Error") ? Colors.redAccent : const Color(0xFF10B981),
-                      ),
-                    ),
-                    const SizedBox(height: 14),
+                    if (isProcessing) ...[
+                      LinearProgressIndicator(value: dubbingProgress, color: const Color(0xFF10B981)),
+                      const SizedBox(height: 10),
+                    ],
                     Text(
                       currentStatus,
+                      textAlign: TextAlign.center,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w500,
                         color: currentStatus.startsWith("Error") ? Colors.redAccent : Colors.white70,
                       ),
                     ),
-                    if (isProcessing) ...[
-                      const Divider(height: 24, color: Color(0xFF334155)),
-                      Wrap(
-                        spacing: 16,
-                        runSpacing: 10,
-                        children: [
-                          _buildStepItem(1, "Init", currentStep == 1, currentStep > 1),
-                          _buildStepItem(2, "Upload", currentStep == 2, currentStep > 2),
-                          _buildStepItem(3, "Clone & Dub", currentStep == 3, currentStep > 3),
-                          _buildStepItem(4, "Ready", currentStep == 4, currentStep == 4),
-                        ],
-                      ),
-                    ],
                   ],
                 ),
               ),
 
-            // Final Dubbed Video Download Card
+            // Result Card
             if (outputVideoUrl != null) ...[
-              const SizedBox(height: 22),
+              const SizedBox(height: 20),
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(20),
+                padding: const EdgeInsets.all(18),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [const Color(0xFF10B981).withOpacity(0.18), const Color(0xFF0F172A)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  border: Border.all(color: const Color(0xFF10B981), width: 1.5),
-                  borderRadius: BorderRadius.circular(20),
+                  color: const Color(0xFF10B981).withOpacity(0.15),
+                  border: Border.all(color: const Color(0xFF10B981)),
+                  borderRadius: BorderRadius.circular(16),
                 ),
                 child: Column(
                   children: [
-                    const Icon(Icons.task_alt_rounded, color: Color(0xFF10B981), size: 46),
+                    const Icon(Icons.task_alt_rounded, color: Color(0xFF10B981), size: 44),
                     const SizedBox(height: 8),
-                    const Text("Dubbed Video is Ready!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Color(0xFF10B981))),
-                    const SizedBox(height: 4),
-                    const Text("In-video voice clone and Hindi dubbing completed.", style: TextStyle(fontSize: 12, color: Colors.white70)),
-                    const SizedBox(height: 18),
+                    const Text("Dubbed Video is Ready!", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: Color(0xFF10B981))),
+                    if (dubbedDialogue != null) ...[
+                      const SizedBox(height: 6),
+                      Text("\"$dubbedDialogue\"", textAlign: TextAlign.center, style: const TextStyle(fontSize: 12, color: Colors.white70, fontStyle: FontStyle.italic)),
+                    ],
+                    const SizedBox(height: 14),
                     Row(
                       children: [
                         Expanded(
                           child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF2563EB),
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                            icon: const Icon(Icons.play_arrow_rounded, color: Colors.white),
-                            label: const Text("Preview", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF2563EB)),
+                            icon: const Icon(Icons.play_arrow_rounded),
+                            label: const Text("Preview Video"),
                             onPressed: () => launchUrl(Uri.parse(outputVideoUrl!), mode: LaunchMode.externalApplication),
                           ),
                         ),
-                        const SizedBox(width: 12),
+                        const SizedBox(width: 10),
                         Expanded(
                           child: ElevatedButton.icon(
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF10B981),
-                              padding: const EdgeInsets.symmetric(vertical: 13),
-                              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                            ),
-                            icon: const Icon(Icons.download_rounded, color: Colors.white),
-                            label: const Text("Download", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                            style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF10B981)),
+                            icon: const Icon(Icons.download_rounded),
+                            label: const Text("Download"),
                             onPressed: () => launchUrl(Uri.parse(outputVideoUrl!), mode: LaunchMode.externalApplication),
                           ),
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 10),
-                    TextButton.icon(
-                      icon: const Icon(Icons.copy_rounded, size: 15, color: Colors.white60),
-                      label: const Text("Copy Download Link", style: TextStyle(color: Colors.white60, fontSize: 12)),
-                      onPressed: () {
-                        Clipboard.setData(ClipboardData(text: outputVideoUrl!));
-                        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Link copied to clipboard!")));
-                      },
                     ),
                   ],
                 ),
